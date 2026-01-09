@@ -124,10 +124,3 @@ function BusinessTracker() {
     </div>
   );
 }
-
-// 渲染到页面上
-const rootElement = document.getElementById('root');
-if (rootElement) {
-  const root = ReactDOM.createRoot(rootElement);
-  root.render(<BusinessTracker />);
-}
