@@ -1,13 +1,309 @@
 <!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>生意记账本 test
-    </title>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>全球旅行记账 - 自由汇率版</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-  </head>
-  <body>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { -webkit-tap-highlight-color: transparent; }
+        .custom-scrollbar::-webkit-scrollbar { display: none; }
+        .menu-drop { animation: menuShow 0.2s ease-out; transform-origin: top right; }
+        @keyframes menuShow { from { opacity: 0; transform: scale(0.95) translateY(-10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+        @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .animate-fade-in { animation: fadeIn 0.2s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
-  </body>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const SUPABASE_URL = 'https://jpbmwvuolejtqobsdncn.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_5ld6kcXVmtRbJA49Fc53-w_97kBTAhi';
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        const CATEGORIES = [
+            '🍲 餐饮', '🚗 交通', '✈️ 机票', '💸 各国现金', 
+            '🏨 住宿', '🛍️ 购物(自用)', '🎁 购物(礼品)', '🎫 门票'
+        ];
+
+        // 核心配置：这三项汇率永远为 1
+        const FIXED_RATE_CATEGORIES = ['✈️ 机票', '💸 各国现金', '🏨 住宿'];
+
+        function CoupleTracker() {
+            const getToday = () => new Date().toISOString().split('T')[0];
+            
+            const [trips, setTrips] = useState([]);
+            const [currentTripId, setCurrentTripId] = useState(null);
+            const [records, setRecords] = useState([]);
+            const [activeTab, setActiveTab] = useState('view');
+            const [editingId, setEditingId] = useState(null);
+            const [user, setUser] = useState(localStorage.getItem('current_user') || '女友支付');
+            const [isLoading, setIsLoading] = useState(true);
+            const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+            const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
+            const [showNewTripModal, setShowNewTripModal] = useState(false);
+            const [newTripName, setNewTripName] = useState('');
+            const [confirmDelete, setConfirmDelete] = useState({ show: false, id: null, name: '' });
+            
+            // 记忆用户输入的最新汇率
+            const [lastCustomRate, setLastCustomRate] = useState('0.0033'); 
+
+            const [form, setForm] = useState({ 
+                title: '', amount: '', category: '🍲 餐饮', currency: 'LOCAL', rate: '0.0033', date: getToday() 
+            });
+
+            // 监听分类切换逻辑
+            useEffect(() => {
+                if (FIXED_RATE_CATEGORIES.includes(form.category)) {
+                    setForm(prev => ({ ...prev, rate: '1' }));
+                } else {
+                    // 切换回普通分类时，恢复之前输入的汇率
+                    setForm(prev => ({ ...prev, rate: lastCustomRate }));
+                }
+            }, [form.category]);
+
+            useEffect(() => { fetchTrips(); }, []);
+            useEffect(() => { if (currentTripId) fetchRecords(currentTripId); }, [currentTripId]);
+
+            async function fetchTrips() {
+                const { data } = await supabaseClient.from('trips').select('*').order('id', { ascending: false });
+                if (data && data.length > 0) {
+                    setTrips(data);
+                    if (!currentTripId) setCurrentTripId(data[0].id);
+                }
+                setIsLoading(false);
+            }
+
+            async function fetchRecords(tid) {
+                const { data } = await supabaseClient.from('records').select('*').eq('trip_id', tid).order('date', { ascending: false }).order('id', { ascending: false });
+                setRecords(data || []);
+            }
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!form.title || !form.amount || !currentTripId) return;
+
+                const payload = { 
+                    ...form, 
+                    trip_id: currentTripId, 
+                    payer: user, 
+                    time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) 
+                };
+
+                if (editingId) { 
+                    await supabaseClient.from('records').update(payload).eq('id', editingId); 
+                } else { 
+                    await supabaseClient.from('records').insert([payload]); 
+                    // 保存时，如果不是固定分类，则更新记忆汇率
+                    if (!FIXED_RATE_CATEGORIES.includes(form.category)) {
+                        setLastCustomRate(form.rate);
+                    }
+                }
+                
+                setEditingId(null);
+                setForm({ ...form, title: '', amount: '' });
+                setActiveTab('view');
+                fetchRecords(currentTripId);
+            };
+
+            const executeDelete = async () => {
+                const { id } = confirmDelete;
+                await supabaseClient.from('trips').delete().eq('id', id);
+                const remaining = trips.filter(t => t.id !== id);
+                setTrips(remaining);
+                if (currentTripId === id) setCurrentTripId(remaining.length > 0 ? remaining[0].id : null);
+                setConfirmDelete({ show: false, id: null, name: '' });
+            };
+
+            const stats = useMemo(() => {
+                return records.reduce((acc, r) => {
+                    const valMYR = Number(r.amount) * Number(r.rate);
+                    if (r.payer === '女友支付') acc.gf += valMYR; else acc.bf += valMYR;
+                    return acc;
+                }, { gf: 0, bf: 0 });
+            }, [records]);
+
+            const groupedRecords = useMemo(() => {
+                const groups = {};
+                records.forEach(r => {
+                    if (!groups[r.date]) groups[r.date] = { list: [], dayTotal: 0 };
+                    groups[r.date].list.push(r);
+                    groups[r.date].dayTotal += (Number(r.amount) * Number(r.rate));
+                });
+                return groups;
+            }, [records]);
+
+            const currentTripName = trips.find(t => t.id == currentTripId)?.name || '未名旅程';
+
+            if (isLoading) return <div className="h-screen flex items-center justify-center font-black text-indigo-500 italic text-2xl">LOADING...</div>;
+
+            return (
+                <div className="min-h-screen pb-32">
+                    {/* Header */}
+                    <div className="bg-slate-900 pt-10 pb-12 px-6 rounded-b-[50px] shadow-2xl text-white relative">
+                        <div className="flex justify-between items-center mb-10 relative z-30">
+                            <div className="relative">
+                                <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="flex items-center gap-2">
+                                    <span className="text-indigo-400 font-black text-2xl tracking-tight">{currentTripName}</span>
+                                    <svg className={`w-5 h-5 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
+                                </button>
+                                {isDropdownOpen && (
+                                    <>
+                                        <div className="fixed inset-0" onClick={() => setIsDropdownOpen(false)}></div>
+                                        <div className="absolute top-12 left-0 w-72 bg-slate-800 border border-slate-700 rounded-3xl shadow-2xl py-3 z-40 menu-drop">
+                                            <div className="max-h-64 overflow-y-auto custom-scrollbar">
+                                                {trips.map(t => (
+                                                    <div key={t.id} onClick={() => { setCurrentTripId(t.id); setIsDropdownOpen(false); }} className={`flex justify-between items-center px-6 py-4 text-sm font-bold ${currentTripId == t.id ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}>
+                                                        <span className="truncate flex-1">{t.name}</span>
+                                                        <button onClick={(e) => { e.stopPropagation(); setConfirmDelete({ show: true, id: t.id, name: t.name }); }} className="ml-2 w-8 h-8 rounded-full bg-rose-500/20 flex items-center justify-center text-rose-500"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <button onClick={() => { setShowNewTripModal(true); setIsDropdownOpen(false); }} className="w-full text-left px-6 py-4 text-indigo-400 font-black text-xs border-t border-slate-700">+ NEW JOURNEY</button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                        <div className="text-center mb-10">
+                            <p className="text-slate-500 text-[10px] uppercase tracking-[0.4em] mb-2 font-black">Total Expenditure</p>
+                            <div className="flex items-baseline justify-center gap-1">
+                                <span className="text-2xl font-black text-indigo-500 italic">RM</span>
+                                <span className="text-6xl font-black italic tracking-tighter text-white">{(stats.gf + stats.bf).toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-rose-500/10 border border-rose-500/20 rounded-[30px] p-5 text-center">
+                                <p className="text-rose-400 text-[9px] font-black uppercase mb-1 tracking-widest opacity-70">FT Spending</p>
+                                <p className="text-2xl font-black text-rose-50 tracking-tight">RM {stats.gf.toFixed(2)}</p>
+                            </div>
+                            <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-[30px] p-5 text-center">
+                                <p className="text-indigo-400 text-[9px] font-black uppercase mb-1 tracking-widest opacity-70">YS Spending</p>
+                                <p className="text-2xl font-black text-indigo-50 tracking-tight">RM {stats.bf.toFixed(2)}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Main Section */}
+                    <div className="max-w-md mx-auto px-5 -mt-6">
+                        {activeTab === 'add' ? (
+                            <div className="bg-white rounded-[40px] p-8 shadow-2xl border border-slate-100">
+                                <div className="flex bg-slate-100 p-1.5 rounded-3xl mb-8">
+                                    <button type="button" onClick={() => setUser('女友支付')} className={`flex-1 py-4 rounded-2xl text-[10px] font-black tracking-widest transition-all ${user === '女友支付' ? 'bg-rose-500 text-white shadow-lg' : 'text-slate-400'}`}>FT PAID</button>
+                                    <button type="button" onClick={() => setUser('男友支付')} className={`flex-1 py-4 rounded-2xl text-[10px] font-black tracking-widest transition-all ${user === '男友支付' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>YS PAID</button>
+                                </div>
+                                <form onSubmit={handleSubmit} className="space-y-6">
+                                    <div className="flex gap-3">
+                                        <div className="flex-1"><label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Date</label><input type="date" className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold outline-none border border-slate-100" value={form.date} onChange={e => setForm({...form, date: e.target.value})} /></div>
+                                        <div className="w-1/2 relative">
+                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Category</label>
+                                            <button type="button" onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold border border-slate-100 flex justify-between items-center">
+                                                <span className="truncate">{form.category}</span>
+                                                <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
+                                            </button>
+                                            {isCategoryPickerOpen && (
+                                                <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-100 rounded-3xl shadow-2xl z-[70] py-2 menu-drop overflow-hidden">
+                                                    <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                                                        {CATEGORIES.map(cat => (
+                                                            <button key={cat} type="button" onClick={() => { setForm({...form, category: cat}); setIsCategoryPickerOpen(false); }} className={`w-full text-left px-5 py-3.5 text-xs font-bold transition-all ${form.category === cat ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}>{cat}</button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div><label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Item Title</label><input placeholder="输入详情..." className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold outline-none border border-slate-100" value={form.title} onChange={e => setForm({...form, title: e.target.value})} /></div>
+                                    
+                                    <div className="flex gap-3">
+                                        <div className="flex-1"><label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase tracking-widest">Amount</label><input type="number" step="any" className="w-full bg-slate-50 p-4 rounded-2xl font-black text-2xl outline-none border border-slate-100" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} /></div>
+                                        <div className="w-[120px]">
+                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase text-center">Rate to RM</label>
+                                            {/* 这里的逻辑：如果属于固定类，则 readOnly 并且样式变灰 */}
+                                            <input 
+                                                type="number" 
+                                                step="any" 
+                                                readOnly={FIXED_RATE_CATEGORIES.includes(form.category)}
+                                                className={`w-full p-4 rounded-2xl font-mono text-sm text-center border transition-colors ${FIXED_RATE_CATEGORIES.includes(form.category) ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white text-indigo-600 border-indigo-100 font-bold'}`} 
+                                                value={form.rate} 
+                                                onChange={e => setForm({...form, rate: e.target.value})} 
+                                            />
+                                        </div>
+                                    </div>
+                                    <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl mt-4 transition-transform active:scale-95 ${user === '女友支付' ? 'bg-gradient-to-r from-rose-500 to-rose-600' : 'bg-gradient-to-r from-indigo-500 to-indigo-700'}`}>SAVE TRANSACTION</button>
+                                </form>
+                            </div>
+                        ) : (
+                            <div className="space-y-10">
+                                {records.length === 0 ? <div className="text-center py-20 opacity-20 font-black italic">NO RECORDS YET</div> : Object.keys(groupedRecords).map(date => (
+                                    <div key={date}>
+                                        <div className="flex justify-between items-center mb-5 px-2">
+                                            <div className="flex items-center gap-3"><div className="h-1 w-4 bg-indigo-500 rounded-full"></div><h3 className="text-xs font-black text-slate-800 tracking-tighter">{date}</h3></div>
+                                            <div className="bg-indigo-50 px-3 py-1 rounded-full"><p className="text-[10px] font-black text-indigo-600">RM {groupedRecords[date].dayTotal.toFixed(2)}</p></div>
+                                        </div>
+                                        <div className="space-y-4">
+                                            {groupedRecords[date].list.map(r => (
+                                                <div key={r.id} onClick={() => {setForm(r); setEditingId(r.id); setActiveTab('add');}} className="bg-white p-6 rounded-[30px] flex justify-between items-center shadow-sm border border-slate-100 active:scale-95 transition-all">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center text-xl">{r.category.substring(0,2)}</div>
+                                                        <div><p className="font-bold text-sm text-slate-800 mb-2">{r.title}</p><span className={`text-[8px] px-2 py-0.5 rounded font-black ${r.payer === '女友支付' ? 'bg-rose-50 text-rose-500' : 'bg-indigo-50 text-indigo-500'}`}>{r.payer === '女友支付' ? 'GF' : 'BF'}</span></div>
+                                                    </div>
+                                                    <div className="text-right"><p className="font-black text-slate-900 text-lg italic tracking-tighter">RM {(r.amount * r.rate).toFixed(2)}</p><p className="text-[9px] text-slate-400 font-bold">{Number(r.amount).toLocaleString()} {r.rate == 1 ? 'RM' : 'LOCAL'}</p></div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* New Trip Modal */}
+                    {showNewTripModal && (
+                        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center px-4 bg-slate-900/60 backdrop-blur-sm">
+                            <div className="bg-white w-full max-w-sm rounded-[40px] p-8 shadow-2xl animate-slide-up">
+                                <h3 className="text-xl font-black text-slate-900 mb-2 italic">New Journey</h3>
+                                <input autoFocus className="w-full bg-slate-100 p-5 rounded-3xl text-sm font-bold outline-none mb-6 border-2 border-transparent focus:border-indigo-500" placeholder="E.g. SEOUL 2026" value={newTripName} onChange={(e) => setNewTripName(e.target.value)} />
+                                <div className="flex gap-3"><button onClick={() => setShowNewTripModal(false)} className="flex-1 py-4 text-slate-400 font-black text-xs uppercase">Cancel</button><button onClick={async () => { if(!newTripName) return; const {data} = await supabaseClient.from('trips').insert([{name: newTripName}]).select(); if(data) { setTrips([data[0], ...trips]); setCurrentTripId(data[0].id); setNewTripName(''); setShowNewTripModal(false); } }} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs shadow-lg">Create</button></div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Delete Confirmation */}
+                    {confirmDelete.show && (
+                        <div className="fixed inset-0 z-[110] flex items-center justify-center px-6 bg-rose-950/40 backdrop-blur-md">
+                            <div className="bg-white w-full max-w-xs rounded-[40px] p-8 shadow-2xl text-center animate-slide-up">
+                                <h3 className="text-lg font-black text-slate-900 mb-2">确认删除？</h3>
+                                <div className="flex flex-col gap-2"><button onClick={executeDelete} className="w-full py-4 bg-rose-500 text-white rounded-2xl font-black text-xs shadow-lg">Yes, Delete</button><button onClick={() => setConfirmDelete({ show: false, id: null, name: '' })} className="w-full py-4 text-slate-400 font-black text-xs uppercase">Go Back</button></div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Tab Bar */}
+                    <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-100 px-16 py-6 flex justify-around items-center z-50 pb-[calc(env(safe-area-inset-bottom)+20px)]">
+                        <button onClick={() => { setEditingId(null); setForm({...form, title: '', amount: ''}); setActiveTab('add'); }} className="flex flex-col items-center gap-2 active:scale-90 transition-all">
+                            <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl transition-all ${activeTab === 'add' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-200 text-slate-400'}`}><svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg></div>
+                            <span className={`text-[10px] font-black tracking-widest ${activeTab === 'add' ? 'text-indigo-600' : 'text-slate-300'}`}>ADD</span>
+                        </button>
+                        <button onClick={() => setActiveTab('view')} className="flex flex-col items-center gap-2 active:scale-90 transition-all">
+                            <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl transition-all ${activeTab === 'view' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-200 text-slate-400'}`}><svg className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" /></svg></div>
+                            <span className={`text-[10px] font-black tracking-widest ${activeTab === 'view' ? 'text-indigo-600' : 'text-slate-300'}`}>LIST</span>
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<CoupleTracker />);
+    </script>
+</body>
 </html>
