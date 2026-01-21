@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>全球旅行记账 - 自由汇率版</title>
+    <title>全球旅行记账 - 修复版</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -16,8 +16,6 @@
         @keyframes menuShow { from { opacity: 0; transform: scale(0.95) translateY(-10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
         @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-        .animate-fade-in { animation: fadeIn 0.2s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -35,7 +33,6 @@
             '🏨 住宿', '🛍️ 购物(自用)', '🎁 购物(礼品)', '🎫 门票'
         ];
 
-        // 核心配置：这三项汇率永远为 1
         const FIXED_RATE_CATEGORIES = ['✈️ 机票', '💸 各国现金', '🏨 住宿'];
 
         function CoupleTracker() {
@@ -50,26 +47,22 @@
             const [isLoading, setIsLoading] = useState(true);
             const [isDropdownOpen, setIsDropdownOpen] = useState(false);
             const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
-            const [showNewTripModal, setShowNewTripModal] = useState(false);
+            const [tripModal, setTripModal] = useState({ show: false, mode: 'create', id: null });
             const [newTripName, setNewTripName] = useState('');
-            const [confirmDelete, setConfirmDelete] = useState({ show: false, id: null, name: '' });
+            const [confirmAction, setConfirmAction] = useState({ show: false, type: '', id: null, title: '' });
             
-            // 记忆用户输入的最新汇率
             const [lastCustomRate, setLastCustomRate] = useState('0.0033'); 
-
             const [form, setForm] = useState({ 
                 title: '', amount: '', category: '🍲 餐饮', currency: 'LOCAL', rate: '0.0033', date: getToday() 
             });
 
-            // 监听分类切换逻辑
             useEffect(() => {
                 if (FIXED_RATE_CATEGORIES.includes(form.category)) {
                     setForm(prev => ({ ...prev, rate: '1' }));
-                } else {
-                    // 切换回普通分类时，恢复之前输入的汇率
+                } else if (editingId === null) {
                     setForm(prev => ({ ...prev, rate: lastCustomRate }));
                 }
-            }, [form.category]);
+            }, [form.category, editingId]);
 
             useEffect(() => { fetchTrips(); }, []);
             useEffect(() => { if (currentTripId) fetchRecords(currentTripId); }, [currentTripId]);
@@ -88,14 +81,25 @@
                 setRecords(data || []);
             }
 
+            async function createDefaultTrip() {
+                const { data } = await supabaseClient.from('trips').insert([{ name: '默认旅程' }]).select();
+                if (data && data.length > 0) {
+                    setTrips(prev => [data[0], ...prev]);
+                    setCurrentTripId(data[0].id);
+                    return data[0].id;
+                }
+                return null;
+            }
+
             const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (!form.title || !form.amount || !currentTripId) return;
+                if (!form.title || !form.amount) return;
+                let targetTripId = currentTripId;
+                if (!targetTripId) targetTripId = await createDefaultTrip();
+                if (!targetTripId) return;
 
                 const payload = { 
-                    ...form, 
-                    trip_id: currentTripId, 
-                    payer: user, 
+                    ...form, trip_id: targetTripId, payer: user, 
                     time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) 
                 };
 
@@ -103,25 +107,51 @@
                     await supabaseClient.from('records').update(payload).eq('id', editingId); 
                 } else { 
                     await supabaseClient.from('records').insert([payload]); 
-                    // 保存时，如果不是固定分类，则更新记忆汇率
-                    if (!FIXED_RATE_CATEGORIES.includes(form.category)) {
-                        setLastCustomRate(form.rate);
-                    }
+                    if (!FIXED_RATE_CATEGORIES.includes(form.category)) setLastCustomRate(form.rate);
                 }
-                
-                setEditingId(null);
-                setForm({ ...form, title: '', amount: '' });
-                setActiveTab('view');
-                fetchRecords(currentTripId);
+                resetForm();
+                fetchRecords(targetTripId);
             };
 
-            const executeDelete = async () => {
-                const { id } = confirmDelete;
-                await supabaseClient.from('trips').delete().eq('id', id);
-                const remaining = trips.filter(t => t.id !== id);
-                setTrips(remaining);
-                if (currentTripId === id) setCurrentTripId(remaining.length > 0 ? remaining[0].id : null);
-                setConfirmDelete({ show: false, id: null, name: '' });
+            const handleTripAction = async () => {
+                if (!newTripName) return;
+                if (tripModal.mode === 'create') {
+                    const { data } = await supabaseClient.from('trips').insert([{ name: newTripName }]).select();
+                    if (data) {
+                        setTrips([data[0], ...trips]);
+                        setCurrentTripId(data[0].id);
+                    }
+                } else {
+                    await supabaseClient.from('trips').update({ name: newTripName }).eq('id', tripModal.id);
+                    setTrips(trips.map(t => t.id === tripModal.id ? { ...t, name: newTripName } : t));
+                }
+                setNewTripName('');
+                setTripModal({ show: false, mode: 'create', id: null });
+            };
+
+            const resetForm = () => {
+                setEditingId(null);
+                setForm({ ...form, title: '', amount: '', date: getToday() });
+                setActiveTab('view');
+            };
+
+            const handleConfirmExecute = async () => {
+                const { type, id } = confirmAction;
+                if (type === 'trip') {
+                    await supabaseClient.from('trips').delete().eq('id', id);
+                    const remaining = trips.filter(t => t.id !== id);
+                    setTrips(remaining);
+                    if (currentTripId === id) {
+                        const nextId = remaining.length > 0 ? remaining[0].id : null;
+                        setCurrentTripId(nextId);
+                        if (!nextId) setRecords([]);
+                    }
+                } else if (type === 'record') {
+                    await supabaseClient.from('records').delete().eq('id', id);
+                    fetchRecords(currentTripId);
+                    resetForm();
+                }
+                setConfirmAction({ show: false, type: '', id: null, title: '' });
             };
 
             const stats = useMemo(() => {
@@ -142,7 +172,8 @@
                 return groups;
             }, [records]);
 
-            const currentTripName = trips.find(t => t.id == currentTripId)?.name || '未名旅程';
+            const currentTrip = trips.find(t => t.id == currentTripId);
+            const currentTripName = currentTrip?.name || '开始记账';
 
             if (isLoading) return <div className="h-screen flex items-center justify-center font-black text-indigo-500 italic text-2xl">LOADING...</div>;
 
@@ -151,26 +182,34 @@
                     {/* Header */}
                     <div className="bg-slate-900 pt-10 pb-12 px-6 rounded-b-[50px] shadow-2xl text-white relative">
                         <div className="flex justify-between items-center mb-10 relative z-30">
-                            <div className="relative">
-                                <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="flex items-center gap-2">
-                                    <span className="text-indigo-400 font-black text-2xl tracking-tight">{currentTripName}</span>
-                                    <svg className={`w-5 h-5 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
-                                </button>
-                                {isDropdownOpen && (
-                                    <>
-                                        <div className="fixed inset-0" onClick={() => setIsDropdownOpen(false)}></div>
-                                        <div className="absolute top-12 left-0 w-72 bg-slate-800 border border-slate-700 rounded-3xl shadow-2xl py-3 z-40 menu-drop">
-                                            <div className="max-h-64 overflow-y-auto custom-scrollbar">
-                                                {trips.map(t => (
-                                                    <div key={t.id} onClick={() => { setCurrentTripId(t.id); setIsDropdownOpen(false); }} className={`flex justify-between items-center px-6 py-4 text-sm font-bold ${currentTripId == t.id ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}>
-                                                        <span className="truncate flex-1">{t.name}</span>
-                                                        <button onClick={(e) => { e.stopPropagation(); setConfirmDelete({ show: true, id: t.id, name: t.name }); }} className="ml-2 w-8 h-8 rounded-full bg-rose-500/20 flex items-center justify-center text-rose-500"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
-                                                    </div>
-                                                ))}
+                            <div className="flex items-center gap-2">
+                                <div className="relative">
+                                    <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="flex items-center gap-2">
+                                        <span className="text-indigo-400 font-black text-2xl tracking-tight max-w-[180px] truncate">{currentTripName}</span>
+                                        <svg className={`w-5 h-5 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
+                                    </button>
+                                    {isDropdownOpen && (
+                                        <>
+                                            <div className="fixed inset-0" onClick={() => setIsDropdownOpen(false)}></div>
+                                            <div className="absolute top-12 left-0 w-72 bg-slate-800 border border-slate-700 rounded-3xl shadow-2xl py-3 z-40 menu-drop">
+                                                <div className="max-h-64 overflow-y-auto custom-scrollbar">
+                                                    {trips.length === 0 && <div className="px-6 py-4 text-xs text-slate-500">暂无旅程</div>}
+                                                    {trips.map(t => (
+                                                        <div key={t.id} onClick={() => { setCurrentTripId(t.id); setIsDropdownOpen(false); }} className={`flex justify-between items-center px-6 py-4 text-sm font-bold ${currentTripId == t.id ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}>
+                                                            <span className="truncate flex-1">{t.name}</span>
+                                                            <button onClick={(e) => { e.stopPropagation(); setConfirmAction({ show: true, type: 'trip', id: t.id, title: t.name }); }} className="ml-2 w-8 h-8 rounded-full bg-rose-500/20 flex items-center justify-center text-rose-500"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <button onClick={() => { setTripModal({ show: true, mode: 'create', id: null }); setIsDropdownOpen(false); }} className="w-full text-left px-6 py-4 text-indigo-400 font-black text-xs border-t border-slate-700">+ NEW JOURNEY</button>
                                             </div>
-                                            <button onClick={() => { setShowNewTripModal(true); setIsDropdownOpen(false); }} className="w-full text-left px-6 py-4 text-indigo-400 font-black text-xs border-t border-slate-700">+ NEW JOURNEY</button>
-                                        </div>
-                                    </>
+                                        </>
+                                    )}
+                                </div>
+                                {currentTripId && (
+                                    <button onClick={() => { setNewTripName(currentTripName); setTripModal({ show: true, mode: 'edit', id: currentTripId }); }} className="p-2 bg-slate-800 rounded-full text-slate-400">
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" /></svg>
+                                    </button>
                                 )}
                             </div>
                         </div>
@@ -193,7 +232,6 @@
                         </div>
                     </div>
 
-                    {/* Main Section */}
                     <div className="max-w-md mx-auto px-5 -mt-6">
                         {activeTab === 'add' ? (
                             <div className="bg-white rounded-[40px] p-8 shadow-2xl border border-slate-100">
@@ -222,23 +260,21 @@
                                         </div>
                                     </div>
                                     <div><label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Item Title</label><input placeholder="输入详情..." className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold outline-none border border-slate-100" value={form.title} onChange={e => setForm({...form, title: e.target.value})} /></div>
-                                    
                                     <div className="flex gap-3">
                                         <div className="flex-1"><label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase tracking-widest">Amount</label><input type="number" step="any" className="w-full bg-slate-50 p-4 rounded-2xl font-black text-2xl outline-none border border-slate-100" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} /></div>
                                         <div className="w-[120px]">
-                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase text-center">Rate to RM</label>
-                                            {/* 这里的逻辑：如果属于固定类，则 readOnly 并且样式变灰 */}
-                                            <input 
-                                                type="number" 
-                                                step="any" 
-                                                readOnly={FIXED_RATE_CATEGORIES.includes(form.category)}
-                                                className={`w-full p-4 rounded-2xl font-mono text-sm text-center border transition-colors ${FIXED_RATE_CATEGORIES.includes(form.category) ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white text-indigo-600 border-indigo-100 font-bold'}`} 
-                                                value={form.rate} 
-                                                onChange={e => setForm({...form, rate: e.target.value})} 
-                                            />
+                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase text-center">Rate</label>
+                                            <input type="number" step="any" readOnly={FIXED_RATE_CATEGORIES.includes(form.category)} className={`w-full p-4 rounded-2xl font-mono text-sm text-center border transition-colors ${FIXED_RATE_CATEGORIES.includes(form.category) ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white text-indigo-600 border-indigo-100 font-bold'}`} value={form.rate} onChange={e => setForm({...form, rate: e.target.value})} />
                                         </div>
                                     </div>
-                                    <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl mt-4 transition-transform active:scale-95 ${user === '女友支付' ? 'bg-gradient-to-r from-rose-500 to-rose-600' : 'bg-gradient-to-r from-indigo-500 to-indigo-700'}`}>SAVE TRANSACTION</button>
+                                    <div className="pt-4 space-y-3">
+                                        <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl transition-transform active:scale-95 ${user === '女友支付' ? 'bg-rose-500' : 'bg-indigo-600'}`}>
+                                            {editingId ? 'UPDATE RECORD' : 'SAVE TRANSACTION'}
+                                        </button>
+                                        {editingId && (
+                                            <button type="button" onClick={() => setConfirmAction({ show: true, type: 'record', id: editingId, title: form.title })} className="w-full py-4 text-rose-500 font-black text-xs uppercase bg-rose-50 rounded-[20px]">Delete This Record</button>
+                                        )}
+                                    </div>
                                 </form>
                             </div>
                         ) : (
@@ -251,12 +287,15 @@
                                         </div>
                                         <div className="space-y-4">
                                             {groupedRecords[date].list.map(r => (
-                                                <div key={r.id} onClick={() => {setForm(r); setEditingId(r.id); setActiveTab('add');}} className="bg-white p-6 rounded-[30px] flex justify-between items-center shadow-sm border border-slate-100 active:scale-95 transition-all">
+                                                <div key={r.id} onClick={() => {setForm(r); setEditingId(r.id); setActiveTab('add'); setUser(r.payer);}} className="bg-white p-6 rounded-[30px] flex justify-between items-center shadow-sm border border-slate-100 active:scale-95 transition-all">
                                                     <div className="flex items-center gap-4">
                                                         <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center text-xl">{r.category.substring(0,2)}</div>
                                                         <div><p className="font-bold text-sm text-slate-800 mb-2">{r.title}</p><span className={`text-[8px] px-2 py-0.5 rounded font-black ${r.payer === '女友支付' ? 'bg-rose-50 text-rose-500' : 'bg-indigo-50 text-indigo-500'}`}>{r.payer === '女友支付' ? 'GF' : 'BF'}</span></div>
                                                     </div>
-                                                    <div className="text-right"><p className="font-black text-slate-900 text-lg italic tracking-tighter">RM {(r.amount * r.rate).toFixed(2)}</p><p className="text-[9px] text-slate-400 font-bold">{Number(r.amount).toLocaleString()} {r.rate == 1 ? 'RM' : 'LOCAL'}</p></div>
+                                                    <div className="text-right">
+                                                        <p className="font-black text-slate-900 text-lg italic tracking-tighter">RM {(r.amount * r.rate).toFixed(2)}</p>
+                                                        <p className="text-[9px] text-slate-400 font-bold">{Number(r.amount).toLocaleString()} {r.rate == 1 ? 'RM' : '外国钱'}</p>
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -266,35 +305,42 @@
                         )}
                     </div>
 
-                    {/* New Trip Modal */}
-                    {showNewTripModal && (
+                    {confirmAction.show && (
+                        <div className="fixed inset-0 z-[120] flex items-center justify-center px-6 bg-slate-900/60 backdrop-blur-md animate-fade-in">
+                            <div className="bg-white w-full max-w-xs rounded-[40px] p-8 shadow-2xl text-center animate-slide-up">
+                                <div className="w-16 h-16 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                </div>
+                                <h3 className="text-lg font-black text-slate-900 mb-1">Confirm Delete?</h3>
+                                <p className="text-xs text-slate-400 font-bold mb-6 truncate px-2">{confirmAction.title}</p>
+                                <div className="flex flex-col gap-2">
+                                    <button onClick={handleConfirmExecute} className="w-full py-4 bg-rose-500 text-white rounded-2xl font-black text-xs shadow-lg tracking-widest">YES, DELETE</button>
+                                    <button onClick={() => setConfirmAction({ show: false, type: '', id: null, title: '' })} className="w-full py-4 text-slate-400 font-black text-xs uppercase tracking-widest">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {tripModal.show && (
                         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center px-4 bg-slate-900/60 backdrop-blur-sm">
                             <div className="bg-white w-full max-w-sm rounded-[40px] p-8 shadow-2xl animate-slide-up">
-                                <h3 className="text-xl font-black text-slate-900 mb-2 italic">New Journey</h3>
+                                <h3 className="text-xl font-black text-slate-900 mb-2 italic">{tripModal.mode === 'create' ? 'New Journey' : 'Rename Journey'}</h3>
                                 <input autoFocus className="w-full bg-slate-100 p-5 rounded-3xl text-sm font-bold outline-none mb-6 border-2 border-transparent focus:border-indigo-500" placeholder="E.g. SEOUL 2026" value={newTripName} onChange={(e) => setNewTripName(e.target.value)} />
-                                <div className="flex gap-3"><button onClick={() => setShowNewTripModal(false)} className="flex-1 py-4 text-slate-400 font-black text-xs uppercase">Cancel</button><button onClick={async () => { if(!newTripName) return; const {data} = await supabaseClient.from('trips').insert([{name: newTripName}]).select(); if(data) { setTrips([data[0], ...trips]); setCurrentTripId(data[0].id); setNewTripName(''); setShowNewTripModal(false); } }} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs shadow-lg">Create</button></div>
+                                <div className="flex gap-3">
+                                    <button onClick={() => { setTripModal({ show: false, mode: 'create', id: null }); setNewTripName(''); }} className="flex-1 py-4 text-slate-400 font-black text-xs uppercase">Cancel</button>
+                                    <button onClick={handleTripAction} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs shadow-lg uppercase">{tripModal.mode === 'create' ? 'Create' : 'Save'}</button>
+                                </div>
                             </div>
                         </div>
                     )}
 
-                    {/* Delete Confirmation */}
-                    {confirmDelete.show && (
-                        <div className="fixed inset-0 z-[110] flex items-center justify-center px-6 bg-rose-950/40 backdrop-blur-md">
-                            <div className="bg-white w-full max-w-xs rounded-[40px] p-8 shadow-2xl text-center animate-slide-up">
-                                <h3 className="text-lg font-black text-slate-900 mb-2">确认删除？</h3>
-                                <div className="flex flex-col gap-2"><button onClick={executeDelete} className="w-full py-4 bg-rose-500 text-white rounded-2xl font-black text-xs shadow-lg">Yes, Delete</button><button onClick={() => setConfirmDelete({ show: false, id: null, name: '' })} className="w-full py-4 text-slate-400 font-black text-xs uppercase">Go Back</button></div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Tab Bar */}
                     <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-100 px-16 py-6 flex justify-around items-center z-50 pb-[calc(env(safe-area-inset-bottom)+20px)]">
-                        <button onClick={() => { setEditingId(null); setForm({...form, title: '', amount: ''}); setActiveTab('add'); }} className="flex flex-col items-center gap-2 active:scale-90 transition-all">
-                            <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl transition-all ${activeTab === 'add' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-200 text-slate-400'}`}><svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg></div>
+                        <button onClick={() => { setEditingId(null); setForm({...form, title: '', amount: '', date: getToday()}); setActiveTab('add'); }} className="flex flex-col items-center gap-2">
+                            <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl ${activeTab === 'add' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-200 text-slate-400'}`}><svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg></div>
                             <span className={`text-[10px] font-black tracking-widest ${activeTab === 'add' ? 'text-indigo-600' : 'text-slate-300'}`}>ADD</span>
                         </button>
-                        <button onClick={() => setActiveTab('view')} className="flex flex-col items-center gap-2 active:scale-90 transition-all">
-                            <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl transition-all ${activeTab === 'view' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-200 text-slate-400'}`}><svg className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" /></svg></div>
+                        <button onClick={() => setActiveTab('view')} className="flex flex-col items-center gap-2">
+                            <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl ${activeTab === 'view' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-200 text-slate-400'}`}><svg className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" /></svg></div>
                             <span className={`text-[10px] font-black tracking-widest ${activeTab === 'view' ? 'text-indigo-600' : 'text-slate-300'}`}>LIST</span>
                         </button>
                     </div>
