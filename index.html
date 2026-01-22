@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>全球旅行记账 - 修复版</title>
+    <title>全球旅行记账 - 最终修复版</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -51,9 +51,9 @@
             const [newTripName, setNewTripName] = useState('');
             const [confirmAction, setConfirmAction] = useState({ show: false, type: '', id: null, title: '' });
             
-            const [lastCustomRate, setLastCustomRate] = useState('0.0033'); 
+            const [lastCustomRate, setLastCustomRate] = useState('7.5'); 
             const [form, setForm] = useState({ 
-                title: '', amount: '', category: '🍲 餐饮', currency: 'LOCAL', rate: '0.0033', date: getToday() 
+                title: '', amount: '', category: '🍲 餐饮', currency: 'LOCAL', rate: '7.5', date: getToday() 
             });
 
             useEffect(() => {
@@ -68,12 +68,15 @@
             useEffect(() => { if (currentTripId) fetchRecords(currentTripId); }, [currentTripId]);
 
             async function fetchTrips() {
-                const { data } = await supabaseClient.from('trips').select('*').order('id', { ascending: false });
-                if (data && data.length > 0) {
-                    setTrips(data);
-                    if (!currentTripId) setCurrentTripId(data[0].id);
+                try {
+                    const { data } = await supabaseClient.from('trips').select('*').order('id', { ascending: false });
+                    if (data && data.length > 0) {
+                        setTrips(data);
+                        if (!currentTripId) setCurrentTripId(data[0].id);
+                    }
+                } finally {
+                    setIsLoading(false);
                 }
-                setIsLoading(false);
             }
 
             async function fetchRecords(tid) {
@@ -81,58 +84,47 @@
                 setRecords(data || []);
             }
 
-            async function createDefaultTrip() {
-                const { data } = await supabaseClient.from('trips').insert([{ name: '默认旅程' }]).select();
-                if (data && data.length > 0) {
-                    setTrips(prev => [data[0], ...prev]);
-                    setCurrentTripId(data[0].id);
-                    return data[0].id;
-                }
-                return null;
-            }
-
             const handleSubmit = async (e) => {
                 e.preventDefault();
                 if (!form.title || !form.amount) return;
+                
                 let targetTripId = currentTripId;
-                if (!targetTripId) targetTripId = await createDefaultTrip();
-                if (!targetTripId) return;
-
                 const payload = { 
-                    ...form, trip_id: targetTripId, payer: user, 
-                    time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) 
+                    title: form.title,
+                    amount: Number(form.amount),
+                    category: form.category,
+                    currency: form.currency,
+                    rate: Number(form.rate) || 1,
+                    date: form.date,
+                    trip_id: targetTripId, 
+                    payer: user, 
+                    time: editingId ? form.time : new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) 
                 };
 
                 if (editingId) { 
                     await supabaseClient.from('records').update(payload).eq('id', editingId); 
+                    setEditingId(null);
                 } else { 
                     await supabaseClient.from('records').insert([payload]); 
                     if (!FIXED_RATE_CATEGORIES.includes(form.category)) setLastCustomRate(form.rate);
                 }
-                resetForm();
-                fetchRecords(targetTripId);
+
+                await fetchRecords(targetTripId);
+                setForm({ ...form, title: '', amount: '', date: getToday() });
+                setActiveTab('view');
             };
 
             const handleTripAction = async () => {
                 if (!newTripName) return;
                 if (tripModal.mode === 'create') {
                     const { data } = await supabaseClient.from('trips').insert([{ name: newTripName }]).select();
-                    if (data) {
-                        setTrips([data[0], ...trips]);
-                        setCurrentTripId(data[0].id);
-                    }
+                    if (data) { setTrips([data[0], ...trips]); setCurrentTripId(data[0].id); }
                 } else {
                     await supabaseClient.from('trips').update({ name: newTripName }).eq('id', tripModal.id);
                     setTrips(trips.map(t => t.id === tripModal.id ? { ...t, name: newTripName } : t));
                 }
                 setNewTripName('');
                 setTripModal({ show: false, mode: 'create', id: null });
-            };
-
-            const resetForm = () => {
-                setEditingId(null);
-                setForm({ ...form, title: '', amount: '', date: getToday() });
-                setActiveTab('view');
             };
 
             const handleConfirmExecute = async () => {
@@ -149,14 +141,16 @@
                 } else if (type === 'record') {
                     await supabaseClient.from('records').delete().eq('id', id);
                     fetchRecords(currentTripId);
-                    resetForm();
+                    setEditingId(null);
+                    setActiveTab('view');
                 }
                 setConfirmAction({ show: false, type: '', id: null, title: '' });
             };
 
             const stats = useMemo(() => {
                 return records.reduce((acc, r) => {
-                    const valMYR = Number(r.amount) * Number(r.rate);
+                    const rate = Number(r.rate) || 1;
+                    const valMYR = Number(r.amount) / rate;
                     if (r.payer === '女友支付') acc.gf += valMYR; else acc.bf += valMYR;
                     return acc;
                 }, { gf: 0, bf: 0 });
@@ -167,7 +161,8 @@
                 records.forEach(r => {
                     if (!groups[r.date]) groups[r.date] = { list: [], dayTotal: 0 };
                     groups[r.date].list.push(r);
-                    groups[r.date].dayTotal += (Number(r.amount) * Number(r.rate));
+                    const rate = Number(r.rate) || 1;
+                    groups[r.date].dayTotal += (Number(r.amount) / rate);
                 });
                 return groups;
             }, [records]);
@@ -217,7 +212,13 @@
                             <p className="text-slate-500 text-[10px] uppercase tracking-[0.4em] mb-2 font-black">Total Expenditure</p>
                             <div className="flex items-baseline justify-center gap-1">
                                 <span className="text-2xl font-black text-indigo-500 italic">RM</span>
-                                <span className="text-6xl font-black italic tracking-tighter text-white">{(stats.gf + stats.bf).toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                                <span className="text-6xl font-black italic tracking-tighter text-white">
+                                    {/* 修复点：强制 2 位小数显示 */}
+                                    {(stats.gf + stats.bf).toLocaleString(undefined, {
+                                        minimumFractionDigits: 2, 
+                                        maximumFractionDigits: 2
+                                    })}
+                                </span>
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
@@ -234,14 +235,17 @@
 
                     <div className="max-w-md mx-auto px-5 -mt-6">
                         {activeTab === 'add' ? (
-                            <div className="bg-white rounded-[40px] p-8 shadow-2xl border border-slate-100">
+                            <div className="bg-white rounded-[40px] p-8 shadow-2xl border border-slate-100 animate-slide-up">
                                 <div className="flex bg-slate-100 p-1.5 rounded-3xl mb-8">
                                     <button type="button" onClick={() => setUser('女友支付')} className={`flex-1 py-4 rounded-2xl text-[10px] font-black tracking-widest transition-all ${user === '女友支付' ? 'bg-rose-500 text-white shadow-lg' : 'text-slate-400'}`}>FT PAID</button>
                                     <button type="button" onClick={() => setUser('男友支付')} className={`flex-1 py-4 rounded-2xl text-[10px] font-black tracking-widest transition-all ${user === '男友支付' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>YS PAID</button>
                                 </div>
                                 <form onSubmit={handleSubmit} className="space-y-6">
                                     <div className="flex gap-3">
-                                        <div className="flex-1"><label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Date</label><input type="date" className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold outline-none border border-slate-100" value={form.date} onChange={e => setForm({...form, date: e.target.value})} /></div>
+                                        <div className="flex-1">
+                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Date</label>
+                                            <input type="date" className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold border border-slate-100" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                                        </div>
                                         <div className="w-1/2 relative">
                                             <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Category</label>
                                             <button type="button" onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold border border-slate-100 flex justify-between items-center">
@@ -252,27 +256,33 @@
                                                 <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-100 rounded-3xl shadow-2xl z-[70] py-2 menu-drop overflow-hidden">
                                                     <div className="max-h-60 overflow-y-auto custom-scrollbar">
                                                         {CATEGORIES.map(cat => (
-                                                            <button key={cat} type="button" onClick={() => { setForm({...form, category: cat}); setIsCategoryPickerOpen(false); }} className={`w-full text-left px-5 py-3.5 text-xs font-bold transition-all ${form.category === cat ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}>{cat}</button>
+                                                            <button key={cat} type="button" onClick={() => { setForm({...form, category: cat}); setIsCategoryPickerOpen(false); }} className={`w-full text-left px-5 py-3.5 text-xs font-bold ${form.category === cat ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}>{cat}</button>
                                                         ))}
                                                     </div>
                                                 </div>
                                             )}
                                         </div>
                                     </div>
-                                    <div><label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Item Title</label><input placeholder="输入详情..." className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold outline-none border border-slate-100" value={form.title} onChange={e => setForm({...form, title: e.target.value})} /></div>
+                                    <div>
+                                        <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Item Title</label>
+                                        <input placeholder="输入详情..." className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold border border-slate-100 outline-none" value={form.title} onChange={e => setForm({...form, title: e.target.value})} />
+                                    </div>
                                     <div className="flex gap-3">
-                                        <div className="flex-1"><label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase tracking-widest">Amount</label><input type="number" step="any" className="w-full bg-slate-50 p-4 rounded-2xl font-black text-2xl outline-none border border-slate-100" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} /></div>
+                                        <div className="flex-1">
+                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase tracking-widest">Amount</label>
+                                            <input type="number" step="any" className="w-full bg-slate-50 p-4 rounded-2xl font-black text-2xl border border-slate-100 outline-none" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} />
+                                        </div>
                                         <div className="w-[120px]">
-                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase text-center">Rate</label>
-                                            <input type="number" step="any" readOnly={FIXED_RATE_CATEGORIES.includes(form.category)} className={`w-full p-4 rounded-2xl font-mono text-sm text-center border transition-colors ${FIXED_RATE_CATEGORIES.includes(form.category) ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white text-indigo-600 border-indigo-100 font-bold'}`} value={form.rate} onChange={e => setForm({...form, rate: e.target.value})} />
+                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase text-center">Rate (1RM = ?)</label>
+                                            <input type="number" step="any" readOnly={FIXED_RATE_CATEGORIES.includes(form.category)} className={`w-full p-4 rounded-2xl font-mono text-sm text-center border ${FIXED_RATE_CATEGORIES.includes(form.category) ? 'bg-slate-100 text-slate-400' : 'bg-white text-indigo-600 border-indigo-100 font-bold'}`} value={form.rate} onChange={e => setForm({...form, rate: e.target.value})} />
                                         </div>
                                     </div>
                                     <div className="pt-4 space-y-3">
-                                        <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl transition-transform active:scale-95 ${user === '女友支付' ? 'bg-rose-500' : 'bg-indigo-600'}`}>
-                                            {editingId ? 'UPDATE RECORD' : 'SAVE TRANSACTION'}
+                                        <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl active:scale-95 transition-all ${user === '女友支付' ? 'bg-rose-500' : 'bg-indigo-600'}`}>
+                                            {editingId ? 'UPDATE TRANSACTION' : 'SAVE TRANSACTION'}
                                         </button>
                                         {editingId && (
-                                            <button type="button" onClick={() => setConfirmAction({ show: true, type: 'record', id: editingId, title: form.title })} className="w-full py-4 text-rose-500 font-black text-xs uppercase bg-rose-50 rounded-[20px]">Delete This Record</button>
+                                            <button type="button" onClick={() => setConfirmAction({ show: true, type: 'record', id: editingId, title: form.title })} className="w-full py-4 text-rose-500 font-black text-xs uppercase bg-rose-50 rounded-[20px]">Delete Record</button>
                                         )}
                                     </div>
                                 </form>
@@ -283,18 +293,21 @@
                                     <div key={date}>
                                         <div className="flex justify-between items-center mb-5 px-2">
                                             <div className="flex items-center gap-3"><div className="h-1 w-4 bg-indigo-500 rounded-full"></div><h3 className="text-xs font-black text-slate-800 tracking-tighter">{date}</h3></div>
-                                            <div className="bg-indigo-50 px-3 py-1 rounded-full"><p className="text-[10px] font-black text-indigo-600">RM {groupedRecords[date].dayTotal.toFixed(2)}</p></div>
+                                            <div className="bg-indigo-50 px-3 py-1 rounded-full">
+                                                {/* 每日总额也强制 2 位小数 */}
+                                                <p className="text-[10px] font-black text-indigo-600">RM {groupedRecords[date].dayTotal.toFixed(2)}</p>
+                                            </div>
                                         </div>
                                         <div className="space-y-4">
                                             {groupedRecords[date].list.map(r => (
-                                                <div key={r.id} onClick={() => {setForm(r); setEditingId(r.id); setActiveTab('add'); setUser(r.payer);}} className="bg-white p-6 rounded-[30px] flex justify-between items-center shadow-sm border border-slate-100 active:scale-95 transition-all">
+                                                <div key={r.id} onClick={() => {setForm(r); setEditingId(r.id); setActiveTab('add'); setUser(r.payer); window.scrollTo({top:0, behavior:'smooth'});}} className="bg-white p-6 rounded-[30px] flex justify-between items-center shadow-sm border border-slate-100 active:scale-95 transition-all">
                                                     <div className="flex items-center gap-4">
                                                         <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center text-xl">{r.category.substring(0,2)}</div>
                                                         <div><p className="font-bold text-sm text-slate-800 mb-2">{r.title}</p><span className={`text-[8px] px-2 py-0.5 rounded font-black ${r.payer === '女友支付' ? 'bg-rose-50 text-rose-500' : 'bg-indigo-50 text-indigo-500'}`}>{r.payer === '女友支付' ? 'GF' : 'BF'}</span></div>
                                                     </div>
                                                     <div className="text-right">
-                                                        <p className="font-black text-slate-900 text-lg italic tracking-tighter">RM {(r.amount * r.rate).toFixed(2)}</p>
-                                                        <p className="text-[9px] text-slate-400 font-bold">{Number(r.amount).toLocaleString()} {r.rate == 1 ? 'RM' : '外国钱'}</p>
+                                                        <p className="font-black text-slate-900 text-lg italic tracking-tighter">RM {(Number(r.amount) / (Number(r.rate) || 1)).toFixed(2)}</p>
+                                                        <p className="text-[9px] text-slate-400 font-bold">{Number(r.amount).toLocaleString()} {r.rate == 1 ? 'RM' : 'Foreign'}</p>
                                                     </div>
                                                 </div>
                                             ))}
@@ -306,11 +319,8 @@
                     </div>
 
                     {confirmAction.show && (
-                        <div className="fixed inset-0 z-[120] flex items-center justify-center px-6 bg-slate-900/60 backdrop-blur-md animate-fade-in">
+                        <div className="fixed inset-0 z-[120] flex items-center justify-center px-6 bg-slate-900/60 backdrop-blur-md">
                             <div className="bg-white w-full max-w-xs rounded-[40px] p-8 shadow-2xl text-center animate-slide-up">
-                                <div className="w-16 h-16 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                </div>
                                 <h3 className="text-lg font-black text-slate-900 mb-1">Confirm Delete?</h3>
                                 <p className="text-xs text-slate-400 font-bold mb-6 truncate px-2">{confirmAction.title}</p>
                                 <div className="flex flex-col gap-2">
