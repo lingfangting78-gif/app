@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>全球旅行记账 - 最终修复版</title>
+    <title>全球旅行记账 - 结算历史版</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -47,10 +47,51 @@
             const [isLoading, setIsLoading] = useState(true);
             const [isDropdownOpen, setIsDropdownOpen] = useState(false);
             const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
-            const [tripModal, setTripModal] = useState({ show: false, mode: 'create', id: null });
-            const [newTripName, setNewTripName] = useState('');
-            const [confirmAction, setConfirmAction] = useState({ show: false, type: '', id: null, title: '' });
             
+            const [debts, setDebts] = useState(JSON.parse(localStorage.getItem('monthly_debts') || '[]'));
+            const [debtForm, setDebtForm] = useState({ title: '', amount: '' });
+            const [settleSubTab, setSettleSubTab] = useState('pending');
+
+            useEffect(() => {
+                localStorage.setItem('monthly_debts', JSON.stringify(debts));
+            }, [debts]);
+
+            const addDebt = (e) => {
+                e.preventDefault();
+                if (!debtForm.title || !debtForm.amount) return;
+                const now = new Date();
+                const newDebt = { 
+                    id: Date.now(), 
+                    title: debtForm.title, 
+                    amount: Number(debtForm.amount), 
+                    date: now.toLocaleDateString(),
+                    month: now.toLocaleString('default', { month: 'short' }) + ' ' + now.getFullYear(),
+                    status: 'pending' 
+                };
+                setDebts([newDebt, ...debts]);
+                setDebtForm({ title: '', amount: '' });
+            };
+
+            const toggleDebtStatus = (id) => {
+                setDebts(debts.map(d => d.id === id ? { ...d, status: d.status === 'pending' ? 'paid' : 'pending' } : d));
+            };
+
+            const deleteDebt = (id) => {
+                setDebts(debts.filter(d => d.id !== id));
+            };
+
+            const totalPending = useMemo(() => 
+                debts.filter(d => d.status === 'pending').reduce((sum, d) => sum + d.amount, 0), [debts]);
+
+            const groupedPaidDebts = useMemo(() => {
+                const groups = {};
+                debts.filter(d => d.status === 'paid').forEach(d => {
+                    if (!groups[d.month]) groups[d.month] = [];
+                    groups[d.month].push(d);
+                });
+                return groups;
+            }, [debts]);
+
             const [lastCustomRate, setLastCustomRate] = useState('7.5'); 
             const [form, setForm] = useState({ 
                 title: '', amount: '', category: '🍲 餐饮', currency: 'LOCAL', rate: '7.5', date: getToday() 
@@ -87,20 +128,13 @@
             const handleSubmit = async (e) => {
                 e.preventDefault();
                 if (!form.title || !form.amount) return;
-                
                 let targetTripId = currentTripId;
                 const payload = { 
-                    title: form.title,
-                    amount: Number(form.amount),
-                    category: form.category,
-                    currency: form.currency,
-                    rate: Number(form.rate) || 1,
-                    date: form.date,
-                    trip_id: targetTripId, 
-                    payer: user, 
+                    title: form.title, amount: Number(form.amount), category: form.category,
+                    currency: form.currency, rate: Number(form.rate) || 1, date: form.date,
+                    trip_id: targetTripId, payer: user, 
                     time: editingId ? form.time : new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) 
                 };
-
                 if (editingId) { 
                     await supabaseClient.from('records').update(payload).eq('id', editingId); 
                     setEditingId(null);
@@ -108,43 +142,9 @@
                     await supabaseClient.from('records').insert([payload]); 
                     if (!FIXED_RATE_CATEGORIES.includes(form.category)) setLastCustomRate(form.rate);
                 }
-
                 await fetchRecords(targetTripId);
                 setForm({ ...form, title: '', amount: '', date: getToday() });
                 setActiveTab('view');
-            };
-
-            const handleTripAction = async () => {
-                if (!newTripName) return;
-                if (tripModal.mode === 'create') {
-                    const { data } = await supabaseClient.from('trips').insert([{ name: newTripName }]).select();
-                    if (data) { setTrips([data[0], ...trips]); setCurrentTripId(data[0].id); }
-                } else {
-                    await supabaseClient.from('trips').update({ name: newTripName }).eq('id', tripModal.id);
-                    setTrips(trips.map(t => t.id === tripModal.id ? { ...t, name: newTripName } : t));
-                }
-                setNewTripName('');
-                setTripModal({ show: false, mode: 'create', id: null });
-            };
-
-            const handleConfirmExecute = async () => {
-                const { type, id } = confirmAction;
-                if (type === 'trip') {
-                    await supabaseClient.from('trips').delete().eq('id', id);
-                    const remaining = trips.filter(t => t.id !== id);
-                    setTrips(remaining);
-                    if (currentTripId === id) {
-                        const nextId = remaining.length > 0 ? remaining[0].id : null;
-                        setCurrentTripId(nextId);
-                        if (!nextId) setRecords([]);
-                    }
-                } else if (type === 'record') {
-                    await supabaseClient.from('records').delete().eq('id', id);
-                    fetchRecords(currentTripId);
-                    setEditingId(null);
-                    setActiveTab('view');
-                }
-                setConfirmAction({ show: false, type: '', id: null, title: '' });
             };
 
             const stats = useMemo(() => {
@@ -174,8 +174,8 @@
 
             return (
                 <div className="min-h-screen pb-32">
-                    {/* Header */}
-                    <div className="bg-slate-900 pt-10 pb-12 px-6 rounded-b-[50px] shadow-2xl text-white relative">
+                    {/* Header - 修改了圆角和高度间距 */}
+                    <div className="bg-slate-900 pt-10 pb-10 px-6 rounded-b-[40px] shadow-2xl text-white relative z-20">
                         <div className="flex justify-between items-center mb-10 relative z-30">
                             <div className="flex items-center gap-2">
                                 <div className="relative">
@@ -188,37 +188,28 @@
                                             <div className="fixed inset-0" onClick={() => setIsDropdownOpen(false)}></div>
                                             <div className="absolute top-12 left-0 w-72 bg-slate-800 border border-slate-700 rounded-3xl shadow-2xl py-3 z-40 menu-drop">
                                                 <div className="max-h-64 overflow-y-auto custom-scrollbar">
-                                                    {trips.length === 0 && <div className="px-6 py-4 text-xs text-slate-500">暂无旅程</div>}
                                                     {trips.map(t => (
                                                         <div key={t.id} onClick={() => { setCurrentTripId(t.id); setIsDropdownOpen(false); }} className={`flex justify-between items-center px-6 py-4 text-sm font-bold ${currentTripId == t.id ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}>
                                                             <span className="truncate flex-1">{t.name}</span>
-                                                            <button onClick={(e) => { e.stopPropagation(); setConfirmAction({ show: true, type: 'trip', id: t.id, title: t.name }); }} className="ml-2 w-8 h-8 rounded-full bg-rose-500/20 flex items-center justify-center text-rose-500"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
                                                         </div>
                                                     ))}
                                                 </div>
-                                                <button onClick={() => { setTripModal({ show: true, mode: 'create', id: null }); setIsDropdownOpen(false); }} className="w-full text-left px-6 py-4 text-indigo-400 font-black text-xs border-t border-slate-700">+ NEW JOURNEY</button>
                                             </div>
                                         </>
                                     )}
                                 </div>
-                                {currentTripId && (
-                                    <button onClick={() => { setNewTripName(currentTripName); setTripModal({ show: true, mode: 'edit', id: currentTripId }); }} className="p-2 bg-slate-800 rounded-full text-slate-400">
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" /></svg>
-                                    </button>
-                                )}
                             </div>
                         </div>
                         <div className="text-center mb-10">
                             <p className="text-slate-500 text-[10px] uppercase tracking-[0.4em] mb-2 font-black">Total Expenditure</p>
-                            <div className="flex items-baseline justify-center gap-1">
-                                <span className="text-2xl font-black text-indigo-500 italic">RM</span>
-                                <span className="text-6xl font-black italic tracking-tighter text-white">
-                                    {/* 修复点：强制 2 位小数显示 */}
-                                    {(stats.gf + stats.bf).toLocaleString(undefined, {
-                                        minimumFractionDigits: 2, 
-                                        maximumFractionDigits: 2
-                                    })}
-                                </span>
+                            <div className="flex flex-col items-center">
+                                <div className="flex items-baseline justify-center gap-1">
+                                    <span className="text-2xl font-black text-indigo-500 italic">RM</span>
+                                    <span className="text-6xl font-black italic tracking-tighter text-white">{(stats.gf + stats.bf).toFixed(2)}</span>
+                                </div>
+                                <div className="mt-2 bg-indigo-500/20 px-3 py-1 rounded-full">
+                                    <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">一人应付: RM {((stats.gf + stats.bf) / 2).toFixed(2)}</p>
+                                </div>
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
@@ -233,7 +224,8 @@
                         </div>
                     </div>
 
-                    <div className="max-w-md mx-auto px-5 -mt-6">
+                    {/* Content Container - 移除了 -mt-6 并增加了 pt-8 */}
+                    <div className="max-w-md mx-auto px-5 pt-8 relative z-10">
                         {activeTab === 'add' ? (
                             <div className="bg-white rounded-[40px] p-8 shadow-2xl border border-slate-100 animate-slide-up">
                                 <div className="flex bg-slate-100 p-1.5 rounded-3xl mb-8">
@@ -250,7 +242,6 @@
                                             <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Category</label>
                                             <button type="button" onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold border border-slate-100 flex justify-between items-center">
                                                 <span className="truncate">{form.category}</span>
-                                                <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
                                             </button>
                                             {isCategoryPickerOpen && (
                                                 <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-100 rounded-3xl shadow-2xl z-[70] py-2 menu-drop overflow-hidden">
@@ -273,41 +264,34 @@
                                             <input type="number" step="any" className="w-full bg-slate-50 p-4 rounded-2xl font-black text-2xl border border-slate-100 outline-none" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} />
                                         </div>
                                         <div className="w-[120px]">
-                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase text-center">Rate (1RM = ?)</label>
+                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase text-center">Rate</label>
                                             <input type="number" step="any" readOnly={FIXED_RATE_CATEGORIES.includes(form.category)} className={`w-full p-4 rounded-2xl font-mono text-sm text-center border ${FIXED_RATE_CATEGORIES.includes(form.category) ? 'bg-slate-100 text-slate-400' : 'bg-white text-indigo-600 border-indigo-100 font-bold'}`} value={form.rate} onChange={e => setForm({...form, rate: e.target.value})} />
                                         </div>
                                     </div>
-                                    <div className="pt-4 space-y-3">
-                                        <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl active:scale-95 transition-all ${user === '女友支付' ? 'bg-rose-500' : 'bg-indigo-600'}`}>
-                                            {editingId ? 'UPDATE TRANSACTION' : 'SAVE TRANSACTION'}
-                                        </button>
-                                        {editingId && (
-                                            <button type="button" onClick={() => setConfirmAction({ show: true, type: 'record', id: editingId, title: form.title })} className="w-full py-4 text-rose-500 font-black text-xs uppercase bg-rose-50 rounded-[20px]">Delete Record</button>
-                                        )}
-                                    </div>
+                                    <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl active:scale-95 transition-all ${user === '女友支付' ? 'bg-rose-500' : 'bg-indigo-600'}`}>SAVE TRANSACTION</button>
                                 </form>
                             </div>
-                        ) : (
+                        ) : activeTab === 'view' ? (
                             <div className="space-y-10">
-                                {records.length === 0 ? <div className="text-center py-20 opacity-20 font-black italic">NO RECORDS YET</div> : Object.keys(groupedRecords).map(date => (
+                                {Object.keys(groupedRecords).map(date => (
                                     <div key={date}>
-                                        <div className="flex justify-between items-center mb-5 px-2">
+                                        <div className="flex justify-between items-end mb-5 px-2">
                                             <div className="flex items-center gap-3"><div className="h-1 w-4 bg-indigo-500 rounded-full"></div><h3 className="text-xs font-black text-slate-800 tracking-tighter">{date}</h3></div>
-                                            <div className="bg-indigo-50 px-3 py-1 rounded-full">
-                                                {/* 每日总额也强制 2 位小数 */}
+                                            <div className="bg-indigo-50 px-3 py-1.5 rounded-2xl text-right">
                                                 <p className="text-[10px] font-black text-indigo-600">RM {groupedRecords[date].dayTotal.toFixed(2)}</p>
+                                                <p className="text-[8px] font-bold text-indigo-300 leading-none">一人 RM {(groupedRecords[date].dayTotal / 2).toFixed(2)}</p>
                                             </div>
                                         </div>
                                         <div className="space-y-4">
                                             {groupedRecords[date].list.map(r => (
-                                                <div key={r.id} onClick={() => {setForm(r); setEditingId(r.id); setActiveTab('add'); setUser(r.payer); window.scrollTo({top:0, behavior:'smooth'});}} className="bg-white p-6 rounded-[30px] flex justify-between items-center shadow-sm border border-slate-100 active:scale-95 transition-all">
+                                                <div key={r.id} onClick={() => {setForm(r); setEditingId(r.id); setActiveTab('add'); setUser(r.payer);}} className="bg-white p-6 rounded-[30px] flex justify-between items-center shadow-sm border border-slate-100 active:scale-95 transition-all">
                                                     <div className="flex items-center gap-4">
                                                         <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center text-xl">{r.category.substring(0,2)}</div>
                                                         <div><p className="font-bold text-sm text-slate-800 mb-2">{r.title}</p><span className={`text-[8px] px-2 py-0.5 rounded font-black ${r.payer === '女友支付' ? 'bg-rose-50 text-rose-500' : 'bg-indigo-50 text-indigo-500'}`}>{r.payer === '女友支付' ? 'GF' : 'BF'}</span></div>
                                                     </div>
                                                     <div className="text-right">
                                                         <p className="font-black text-slate-900 text-lg italic tracking-tighter">RM {(Number(r.amount) / (Number(r.rate) || 1)).toFixed(2)}</p>
-                                                        <p className="text-[9px] text-slate-400 font-bold">{Number(r.amount).toLocaleString()} {r.rate == 1 ? 'RM' : 'Foreign'}</p>
+                                                        <p className="text-[9px] font-bold text-slate-400 italic">一人 RM {( (Number(r.amount) / (Number(r.rate) || 1)) / 2 ).toFixed(2)}</p>
                                                     </div>
                                                 </div>
                                             ))}
@@ -315,43 +299,88 @@
                                     </div>
                                 ))}
                             </div>
+                        ) : (
+                            /* Settle Tab */
+                            <div className="space-y-6 animate-slide-up pb-10">
+                                <div className="bg-indigo-600 rounded-[40px] p-8 text-white shadow-2xl relative overflow-hidden">
+                                    <div className="relative z-10">
+                                        <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-60 mb-2">Total Owed to BF</p>
+                                        <p className="text-4xl font-black italic">RM {totalPending.toFixed(2)}</p>
+                                    </div>
+                                </div>
+
+                                <div className="flex bg-white p-1.5 rounded-3xl shadow-sm border border-slate-100">
+                                    <button onClick={() => setSettleSubTab('pending')} className={`flex-1 py-3 rounded-2xl text-[10px] font-black tracking-widest transition-all ${settleSubTab === 'pending' ? 'bg-slate-900 text-white' : 'text-slate-400'}`}>PENDING ⏳</button>
+                                    <button onClick={() => setSettleSubTab('paid')} className={`flex-1 py-3 rounded-2xl text-[10px] font-black tracking-widest transition-all ${settleSubTab === 'paid' ? 'bg-slate-900 text-white' : 'text-slate-400'}`}>PAID HISTORY ✅</button>
+                                </div>
+
+                                {settleSubTab === 'pending' ? (
+                                    <>
+                                        <div className="bg-white rounded-[40px] p-6 shadow-xl border border-slate-100">
+                                            <h3 className="text-xs font-black text-slate-800 mb-4 px-2 uppercase tracking-widest italic">New Debt Item</h3>
+                                            <form onSubmit={addDebt} className="flex gap-2">
+                                                <input className="flex-1 bg-slate-50 p-4 rounded-2xl text-xs font-bold border border-slate-100 outline-none" placeholder="项目 (如: 12月房租)" value={debtForm.title} onChange={e => setDebtForm({...debtForm, title: e.target.value})} />
+                                                <input type="number" className="w-24 bg-slate-50 p-4 rounded-2xl text-xs font-black border border-slate-100 outline-none" placeholder="RM" value={debtForm.amount} onChange={e => setDebtForm({...debtForm, amount: e.target.value})} />
+                                                <button className="bg-indigo-600 text-white p-4 rounded-2xl shadow-lg active:scale-95 transition-all"><svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg></button>
+                                            </form>
+                                        </div>
+                                        <div className="space-y-3">
+                                            {debts.filter(d => d.status === 'pending').map(debt => (
+                                                <div key={debt.id} className="bg-white p-5 rounded-[24px] flex justify-between items-center shadow-sm border border-slate-50">
+                                                    <div className="flex items-center gap-4">
+                                                        <button onClick={() => toggleDebtStatus(debt.id)} className="w-8 h-8 rounded-full border-2 border-slate-100 flex items-center justify-center text-slate-200 hover:border-green-500 hover:text-green-500 transition-all"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="4" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></button>
+                                                        <div><p className="font-bold text-sm text-slate-800">{debt.title}</p><p className="text-[10px] text-slate-400 font-bold">{debt.date}</p></div>
+                                                    </div>
+                                                    <div className="flex items-center gap-4">
+                                                        <p className="font-black text-indigo-600 text-base italic">RM {debt.amount.toFixed(2)}</p>
+                                                        <button onClick={() => deleteDebt(debt.id)} className="text-slate-200 hover:text-rose-500"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg></button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="space-y-8">
+                                        {Object.keys(groupedPaidDebts).map(month => (
+                                            <div key={month} className="space-y-3">
+                                                <div className="flex items-center gap-2 px-2">
+                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{month}</span>
+                                                    <div className="h-[1px] flex-1 bg-slate-100"></div>
+                                                    <span className="text-[10px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full">Total Paid: RM {groupedPaidDebts[month].reduce((s, d) => s + d.amount, 0).toFixed(2)}</span>
+                                                </div>
+                                                {groupedPaidDebts[month].map(debt => (
+                                                    <div key={debt.id} className="bg-slate-100/50 p-5 rounded-[24px] flex justify-between items-center opacity-60">
+                                                        <div className="flex items-center gap-4">
+                                                            <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center text-white"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="4" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+                                                            <div><p className="font-bold text-sm text-slate-500 line-through">{debt.title}</p></div>
+                                                        </div>
+                                                        <div className="flex items-center gap-4">
+                                                            <p className="font-black text-slate-500 text-base italic">RM {debt.amount.toFixed(2)}</p>
+                                                            <button onClick={() => toggleDebtStatus(debt.id)} className="text-slate-300 hover:text-indigo-500 text-[10px] font-black uppercase">Undo</button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         )}
                     </div>
 
-                    {confirmAction.show && (
-                        <div className="fixed inset-0 z-[120] flex items-center justify-center px-6 bg-slate-900/60 backdrop-blur-md">
-                            <div className="bg-white w-full max-w-xs rounded-[40px] p-8 shadow-2xl text-center animate-slide-up">
-                                <h3 className="text-lg font-black text-slate-900 mb-1">Confirm Delete?</h3>
-                                <p className="text-xs text-slate-400 font-bold mb-6 truncate px-2">{confirmAction.title}</p>
-                                <div className="flex flex-col gap-2">
-                                    <button onClick={handleConfirmExecute} className="w-full py-4 bg-rose-500 text-white rounded-2xl font-black text-xs shadow-lg tracking-widest">YES, DELETE</button>
-                                    <button onClick={() => setConfirmAction({ show: false, type: '', id: null, title: '' })} className="w-full py-4 text-slate-400 font-black text-xs uppercase tracking-widest">Cancel</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {tripModal.show && (
-                        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center px-4 bg-slate-900/60 backdrop-blur-sm">
-                            <div className="bg-white w-full max-w-sm rounded-[40px] p-8 shadow-2xl animate-slide-up">
-                                <h3 className="text-xl font-black text-slate-900 mb-2 italic">{tripModal.mode === 'create' ? 'New Journey' : 'Rename Journey'}</h3>
-                                <input autoFocus className="w-full bg-slate-100 p-5 rounded-3xl text-sm font-bold outline-none mb-6 border-2 border-transparent focus:border-indigo-500" placeholder="E.g. SEOUL 2026" value={newTripName} onChange={(e) => setNewTripName(e.target.value)} />
-                                <div className="flex gap-3">
-                                    <button onClick={() => { setTripModal({ show: false, mode: 'create', id: null }); setNewTripName(''); }} className="flex-1 py-4 text-slate-400 font-black text-xs uppercase">Cancel</button>
-                                    <button onClick={handleTripAction} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs shadow-lg uppercase">{tripModal.mode === 'create' ? 'Create' : 'Save'}</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-100 px-16 py-6 flex justify-around items-center z-50 pb-[calc(env(safe-area-inset-bottom)+20px)]">
-                        <button onClick={() => { setEditingId(null); setForm({...form, title: '', amount: '', date: getToday()}); setActiveTab('add'); }} className="flex flex-col items-center gap-2">
-                            <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl ${activeTab === 'add' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-200 text-slate-400'}`}><svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg></div>
-                            <span className={`text-[10px] font-black tracking-widest ${activeTab === 'add' ? 'text-indigo-600' : 'text-slate-300'}`}>ADD</span>
-                        </button>
+                    {/* Footer */}
+                    <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-100 px-6 py-6 flex justify-around items-center z-50 pb-[calc(env(safe-area-inset-bottom)+20px)]">
                         <button onClick={() => setActiveTab('view')} className="flex flex-col items-center gap-2">
-                            <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl ${activeTab === 'view' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-200 text-slate-400'}`}><svg className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" /></svg></div>
-                            <span className={`text-[10px] font-black tracking-widest ${activeTab === 'view' ? 'text-indigo-600' : 'text-slate-300'}`}>LIST</span>
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${activeTab === 'view' ? 'bg-indigo-600 text-white scale-110 shadow-lg' : 'bg-slate-100 text-slate-400'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"/></svg></div>
+                            <span className={`text-[8px] font-black tracking-widest ${activeTab === 'view' ? 'text-indigo-600' : 'text-slate-300'}`}>LIST</span>
+                        </button>
+                        <button onClick={() => { setEditingId(null); setForm({...form, title: '', amount: '', date: getToday()}); setActiveTab('add'); }} className="flex flex-col items-center gap-2 -mt-8">
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl transition-all ${activeTab === 'add' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-900 text-white'}`}><svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg></div>
+                            <span className={`text-[8px] font-black tracking-widest ${activeTab === 'add' ? 'text-indigo-600' : 'text-slate-300'}`}>ADD</span>
+                        </button>
+                        <button onClick={() => setActiveTab('settle')} className="flex flex-col items-center gap-2">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${activeTab === 'settle' ? 'bg-indigo-600 text-white scale-110 shadow-lg' : 'bg-slate-100 text-slate-400'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2M12 8V7m0 1v8m0 0v1"/></svg></div>
+                            <span className={`text-[8px] font-black tracking-widest ${activeTab === 'settle' ? 'text-indigo-600' : 'text-slate-300'}`}>SETTLE</span>
                         </button>
                     </div>
                 </div>
