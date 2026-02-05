@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>全球旅行记账 - 结算历史版</title>
+    <title>全球旅行记账 - 云端同步版</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -48,46 +48,60 @@
             const [isDropdownOpen, setIsDropdownOpen] = useState(false);
             const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
             
-            const [debts, setDebts] = useState(JSON.parse(localStorage.getItem('monthly_debts') || '[]'));
+            // --- Settle 状态改为从云端获取 ---
+            const [debts, setDebts] = useState([]);
             const [debtForm, setDebtForm] = useState({ title: '', amount: '' });
             const [settleSubTab, setSettleSubTab] = useState('pending');
 
-            useEffect(() => {
-                localStorage.setItem('monthly_debts', JSON.stringify(debts));
-            }, [debts]);
+            // --- 新增：获取云端结算数据 ---
+            const fetchDebts = async () => {
+                const { data } = await supabaseClient
+                    .from('settle_records')
+                    .select('*')
+                    .order('id', { ascending: false });
+                setDebts(data || []);
+            };
 
-            const addDebt = (e) => {
+            const addDebt = async (e) => {
                 e.preventDefault();
                 if (!debtForm.title || !debtForm.amount) return;
                 const now = new Date();
                 const newDebt = { 
-                    id: Date.now(), 
                     title: debtForm.title, 
                     amount: Number(debtForm.amount), 
-                    date: now.toLocaleDateString(),
-                    month: now.toLocaleString('default', { month: 'short' }) + ' ' + now.getFullYear(),
+                    pay_month: now.toLocaleString('default', { month: 'short' }) + ' ' + now.getFullYear(),
                     status: 'pending' 
                 };
-                setDebts([newDebt, ...debts]);
-                setDebtForm({ title: '', amount: '' });
+                
+                const { error } = await supabaseClient.from('settle_records').insert([newDebt]);
+                if (!error) {
+                    fetchDebts(); // 重新加载
+                    setDebtForm({ title: '', amount: '' });
+                }
             };
 
-            const toggleDebtStatus = (id) => {
-                setDebts(debts.map(d => d.id === id ? { ...d, status: d.status === 'pending' ? 'paid' : 'pending' } : d));
+            const toggleDebtStatus = async (id, currentStatus) => {
+                const nextStatus = currentStatus === 'pending' ? 'paid' : 'pending';
+                await supabaseClient.from('settle_records').update({ status: nextStatus }).eq('id', id);
+                fetchDebts();
             };
 
-            const deleteDebt = (id) => {
-                setDebts(debts.filter(d => d.id !== id));
+            const deleteDebt = async (id) => {
+                if(confirm('确定删除这项结算吗？')) {
+                    await supabaseClient.from('settle_records').delete().eq('id', id);
+                    fetchDebts();
+                }
             };
 
+            // --- 数据逻辑部分 ---
             const totalPending = useMemo(() => 
-                debts.filter(d => d.status === 'pending').reduce((sum, d) => sum + d.amount, 0), [debts]);
+                debts.filter(d => d.status === 'pending').reduce((sum, d) => sum + Number(d.amount), 0), [debts]);
 
             const groupedPaidDebts = useMemo(() => {
                 const groups = {};
                 debts.filter(d => d.status === 'paid').forEach(d => {
-                    if (!groups[d.month]) groups[d.month] = [];
-                    groups[d.month].push(d);
+                    if (!groups[d.pay_month]) groups[d.pay_month] = [];
+                    groups[d.pay_month].push(d);
                 });
                 return groups;
             }, [debts]);
@@ -105,7 +119,11 @@
                 }
             }, [form.category, editingId]);
 
-            useEffect(() => { fetchTrips(); }, []);
+            useEffect(() => { 
+                fetchTrips(); 
+                fetchDebts(); // 初始化加载结算数据
+            }, []);
+
             useEffect(() => { if (currentTripId) fetchRecords(currentTripId); }, [currentTripId]);
 
             async function fetchTrips() {
@@ -174,7 +192,7 @@
 
             return (
                 <div className="min-h-screen pb-32">
-                    {/* Header - 修改了圆角和高度间距 */}
+                    {/* Header */}
                     <div className="bg-slate-900 pt-10 pb-10 px-6 rounded-b-[40px] shadow-2xl text-white relative z-20">
                         <div className="flex justify-between items-center mb-10 relative z-30">
                             <div className="flex items-center gap-2">
@@ -224,7 +242,7 @@
                         </div>
                     </div>
 
-                    {/* Content Container - 移除了 -mt-6 并增加了 pt-8 */}
+                    {/* Content Container */}
                     <div className="max-w-md mx-auto px-5 pt-8 relative z-10">
                         {activeTab === 'add' ? (
                             <div className="bg-white rounded-[40px] p-8 shadow-2xl border border-slate-100 animate-slide-up">
@@ -328,11 +346,11 @@
                                             {debts.filter(d => d.status === 'pending').map(debt => (
                                                 <div key={debt.id} className="bg-white p-5 rounded-[24px] flex justify-between items-center shadow-sm border border-slate-50">
                                                     <div className="flex items-center gap-4">
-                                                        <button onClick={() => toggleDebtStatus(debt.id)} className="w-8 h-8 rounded-full border-2 border-slate-100 flex items-center justify-center text-slate-200 hover:border-green-500 hover:text-green-500 transition-all"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="4" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></button>
-                                                        <div><p className="font-bold text-sm text-slate-800">{debt.title}</p><p className="text-[10px] text-slate-400 font-bold">{debt.date}</p></div>
+                                                        <button onClick={() => toggleDebtStatus(debt.id, debt.status)} className="w-8 h-8 rounded-full border-2 border-slate-100 flex items-center justify-center text-slate-200 hover:border-green-500 hover:text-green-500 transition-all"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="4" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></button>
+                                                        <div><p className="font-bold text-sm text-slate-800">{debt.title}</p><p className="text-[10px] text-slate-400 font-bold">{debt.pay_month}</p></div>
                                                     </div>
                                                     <div className="flex items-center gap-4">
-                                                        <p className="font-black text-indigo-600 text-base italic">RM {debt.amount.toFixed(2)}</p>
+                                                        <p className="font-black text-indigo-600 text-base italic">RM {Number(debt.amount).toFixed(2)}</p>
                                                         <button onClick={() => deleteDebt(debt.id)} className="text-slate-200 hover:text-rose-500"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg></button>
                                                     </div>
                                                 </div>
@@ -346,7 +364,7 @@
                                                 <div className="flex items-center gap-2 px-2">
                                                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{month}</span>
                                                     <div className="h-[1px] flex-1 bg-slate-100"></div>
-                                                    <span className="text-[10px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full">Total Paid: RM {groupedPaidDebts[month].reduce((s, d) => s + d.amount, 0).toFixed(2)}</span>
+                                                    <span className="text-[10px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full">Total Paid: RM {groupedPaidDebts[month].reduce((s, d) => s + Number(d.amount), 0).toFixed(2)}</span>
                                                 </div>
                                                 {groupedPaidDebts[month].map(debt => (
                                                     <div key={debt.id} className="bg-slate-100/50 p-5 rounded-[24px] flex justify-between items-center opacity-60">
@@ -355,8 +373,8 @@
                                                             <div><p className="font-bold text-sm text-slate-500 line-through">{debt.title}</p></div>
                                                         </div>
                                                         <div className="flex items-center gap-4">
-                                                            <p className="font-black text-slate-500 text-base italic">RM {debt.amount.toFixed(2)}</p>
-                                                            <button onClick={() => toggleDebtStatus(debt.id)} className="text-slate-300 hover:text-indigo-500 text-[10px] font-black uppercase">Undo</button>
+                                                            <p className="font-black text-slate-500 text-base italic">RM {Number(debt.amount).toFixed(2)}</p>
+                                                            <button onClick={() => toggleDebtStatus(debt.id, debt.status)} className="text-slate-300 hover:text-indigo-500 text-[10px] font-black uppercase">Undo</button>
                                                         </div>
                                                     </div>
                                                 ))}
