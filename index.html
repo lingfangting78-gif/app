@@ -47,18 +47,15 @@
             const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
             const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
             
-            // Trip 管理状态
             const [isTripManagerOpen, setIsTripManagerOpen] = useState(false);
             const [newTripName, setNewTripName] = useState('');
 
-            // Settle 状态
             const [debts, setDebts] = useState([]);
             const [debtForm, setDebtForm] = useState({ title: '', amount: '' });
             const [settleTab, setSettleTab] = useState('pending');
             const [settleEditingId, setSettleEditingId] = useState(null);
             const [isSettleEditModalOpen, setIsSettleEditModalOpen] = useState(false);
 
-            // Gold 状态
             const [goldRecords, setGoldRecords] = useState([]);
             const [currentGoldPrice, setCurrentGoldPrice] = useState('450');
             const [goldEditingId, setGoldEditingId] = useState(null);
@@ -75,7 +72,6 @@
                 if (currentTripId) fetchRecords(currentTripId); 
             }, [currentTripId]);
 
-            // --- Trip 逻辑 ---
             const fetchTrips = async () => {
                 const { data } = await supabaseClient.from('trips').select('*').order('id', { ascending: false });
                 if (data && data.length > 0) {
@@ -105,7 +101,6 @@
                 }
             };
 
-            // --- Record 逻辑 ---
             const fetchRecords = async (tid) => {
                 const { data } = await supabaseClient.from('records').select('*').eq('trip_id', tid).order('date', { ascending: false }).order('id', { ascending: false });
                 setRecords(data || []);
@@ -131,7 +126,6 @@
                 setActiveTab('view');
             };
 
-            // --- Gold 逻辑 ---
             const fetchGoldRecords = async () => {
                 const { data } = await supabaseClient.from('gold_assets').select('*').order('date', { ascending: false });
                 setGoldRecords(data || []);
@@ -180,7 +174,6 @@
 
             const [form, setForm] = useState({ title: '', amount: '', category: '🍲 餐饮', rate: '1', date: getToday() });
 
-            // --- Settle 逻辑 ---
             const fetchDebts = async () => {
                 const { data } = await supabaseClient.from('settle_records').select('*').order('id', { ascending: false });
                 setDebts(data || []);
@@ -235,7 +228,6 @@
 
             return (
                 <div className="min-h-screen pb-32">
-                    {/* Header */}
                     <div className="bg-slate-900 pt-12 pb-10 px-6 rounded-b-[40px] shadow-2xl text-white relative z-[60]">
                         {(activeTab === 'add' || activeTab === 'view') && (
                             <div className="flex items-center justify-center gap-2 mb-6">
@@ -254,7 +246,6 @@
                                         </div>
                                     )}
                                 </div>
-                                {/* 旅行项目管理按钮 */}
                                 <button onClick={() => setIsTripManagerOpen(true)} className="w-10 h-10 flex items-center justify-center bg-white/5 rounded-full text-indigo-400 border border-white/5">
                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                                 </button>
@@ -358,11 +349,20 @@
                             </div>
                         ) : activeTab === 'gold' ? (
                             <div className="space-y-6 animate-slide-up">
+                                {/* 修复后的布局 */}
                                 <div className="bg-white rounded-[30px] p-6 shadow-xl border border-amber-100">
-                                    <div className="flex justify-between items-center mb-4"><h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest italic">Live Market Price</h3><span className={`font-black text-sm ${goldStats.profit >= 0 ? 'text-green-500' : 'text-rose-500'}`}>RM {goldStats.profit.toFixed(2)}</span></div>
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-xs font-black text-slate-800">1G = RM</span>
-                                        <input type="number" className="flex-1 bg-amber-50 p-3 rounded-xl font-black text-amber-600 border-none outline-none text-center" value={currentGoldPrice} onChange={e => setCurrentGoldPrice(e.target.value)} />
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest italic">Live Market Price</h3>
+                                        <span className={`font-black text-sm ${goldStats.profit >= 0 ? 'text-green-500' : 'text-rose-500'}`}>RM {goldStats.profit.toFixed(2)}</span>
+                                    </div>
+                                    <div className="flex items-center gap-3 bg-amber-50 rounded-xl px-4 overflow-hidden">
+                                        <span className="text-xs font-black text-slate-800 whitespace-nowrap py-3">1G = RM</span>
+                                        <input 
+                                            type="number" 
+                                            className="flex-1 bg-transparent p-3 font-black text-amber-600 border-none outline-none text-center" 
+                                            value={currentGoldPrice} 
+                                            onChange={e => setCurrentGoldPrice(e.target.value)} 
+                                        />
                                     </div>
                                 </div>
                                 <form onSubmit={addOrUpdateGoldRecord} className="bg-white rounded-[30px] p-6 shadow-xl space-y-4">
@@ -393,7 +393,6 @@
                                 </div>
                             </div>
                         ) : (
-                            /* SETTLE 页面 */
                             <div className="space-y-6 animate-slide-up">
                                 <div className="bg-indigo-600 rounded-[30px] p-8 text-white shadow-2xl relative overflow-hidden">
                                     <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-60 mb-2">Total Owed</p>
@@ -430,7 +429,6 @@
                         )}
                     </div>
 
-                    {/* Trip 管理弹窗 (新增/删除项目) */}
                     {isTripManagerOpen && (
                         <div className="fixed inset-0 z-[100] flex items-center justify-center px-6 bg-slate-900/80 backdrop-blur-md">
                             <div className="bg-white w-full max-w-sm rounded-[40px] p-8 animate-slide-up shadow-2xl">
@@ -460,7 +458,6 @@
                         </div>
                     )}
 
-                    {/* Gold 删除确认弹窗 */}
                     {isGoldDeleteModalOpen && (
                         <div className="fixed inset-0 z-[100] flex items-center justify-center px-6 bg-slate-900/60 backdrop-blur-sm">
                             <div className="bg-white w-full max-w-sm rounded-[40px] p-8 text-center animate-slide-up">
@@ -473,7 +470,6 @@
                         </div>
                     )}
 
-                    {/* Settle 编辑弹窗 */}
                     {isSettleEditModalOpen && (
                         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-sm">
                             <div className="bg-white w-full max-w-md rounded-t-[40px] sm:rounded-[40px] p-8 animate-slide-up shadow-2xl">
@@ -493,7 +489,6 @@
                         </div>
                     )}
 
-                    {/* 记账记录删除弹窗 */}
                     {isDeleteModalOpen && (
                         <div className="fixed inset-0 z-[100] flex items-center justify-center px-6 bg-slate-900/60 backdrop-blur-sm">
                             <div className="bg-white w-full max-w-sm rounded-[40px] p-8 text-center animate-slide-up">
@@ -506,7 +501,6 @@
                         </div>
                     )}
 
-                    {/* Bottom Nav */}
                     <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 flex justify-between items-center z-[50] pb-[calc(env(safe-area-inset-bottom)+15px)]">
                         <button onClick={() => setActiveTab('add')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'add' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}>
                             <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${activeTab === 'add' ? 'bg-indigo-600 text-white shadow-xl' : 'bg-slate-50'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg></div>
