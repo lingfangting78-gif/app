@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>全球旅行记账 - 云端同步版</title>
+    <title>全球旅行记账 & 黄金投资</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-        body { -webkit-tap-highlight-color: transparent; }
+        body { -webkit-tap-highlight-color: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         .custom-scrollbar::-webkit-scrollbar { display: none; }
-        .menu-drop { animation: menuShow 0.2s ease-out; transform-origin: top right; }
+        .menu-drop { animation: menuShow 0.2s ease-out; }
         @keyframes menuShow { from { opacity: 0; transform: scale(0.95) translateY(-10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
         @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
@@ -30,10 +30,8 @@
 
         const CATEGORIES = [
             '🍲 餐饮', '🚗 交通', '✈️ 机票', '💸 各国现金', 
-            '🏨 住宿', '🛍️ 购物(自用)', '🎁 购物(礼品)', '🎫 门票'
+            '🏨 住宿', '🛍️ 购物(自用)', '🎁 购物(礼品)', '🎫 门票', '🏠 生活费', '💡 杂项'
         ];
-
-        const FIXED_RATE_CATEGORIES = ['✈️ 机票', '💸 各国现金', '🏨 住宿'];
 
         function CoupleTracker() {
             const getToday = () => new Date().toISOString().split('T')[0];
@@ -45,148 +43,180 @@
             const [editingId, setEditingId] = useState(null);
             const [user, setUser] = useState(localStorage.getItem('current_user') || '女友支付');
             const [isLoading, setIsLoading] = useState(true);
-            const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+            const [isTripDropdownOpen, setIsTripDropdownOpen] = useState(false);
             const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
+            const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
             
+            // Trip 管理状态
+            const [isTripManagerOpen, setIsTripManagerOpen] = useState(false);
+            const [newTripName, setNewTripName] = useState('');
+
+            // Settle 状态
             const [debts, setDebts] = useState([]);
             const [debtForm, setDebtForm] = useState({ title: '', amount: '' });
-            const [settleSubTab, setSettleSubTab] = useState('pending');
+            const [settleTab, setSettleTab] = useState('pending');
+            const [settleEditingId, setSettleEditingId] = useState(null);
+            const [isSettleEditModalOpen, setIsSettleEditModalOpen] = useState(false);
 
-            const fetchDebts = async () => {
-                const { data } = await supabaseClient
-                    .from('settle_records')
-                    .select('*')
-                    .order('id', { ascending: false });
-                setDebts(data || []);
-            };
-
-            const addDebt = async (e) => {
-                e.preventDefault();
-                if (!debtForm.title || !debtForm.amount) return;
-                const now = new Date();
-                const newDebt = { 
-                    title: debtForm.title, 
-                    amount: Number(debtForm.amount), 
-                    pay_month: now.toLocaleString('default', { month: 'short' }) + ' ' + now.getFullYear(),
-                    status: 'pending' 
-                };
-                
-                const { error } = await supabaseClient.from('settle_records').insert([newDebt]);
-                if (!error) {
-                    fetchDebts();
-                    setDebtForm({ title: '', amount: '' });
-                }
-            };
-
-            const toggleDebtStatus = async (id, currentStatus) => {
-                const nextStatus = currentStatus === 'pending' ? 'paid' : 'pending';
-                await supabaseClient.from('settle_records').update({ status: nextStatus }).eq('id', id);
-                fetchDebts();
-            };
-
-            const deleteDebt = async (id) => {
-                if(confirm('确定删除这项结算吗？')) {
-                    await supabaseClient.from('settle_records').delete().eq('id', id);
-                    fetchDebts();
-                }
-            };
-
-            const totalPending = useMemo(() => 
-                debts.filter(d => d.status === 'pending').reduce((sum, d) => sum + Number(d.amount), 0), [debts]);
-
-            const groupedPaidDebts = useMemo(() => {
-                const groups = {};
-                debts.filter(d => d.status === 'paid').forEach(d => {
-                    if (!groups[d.pay_month]) groups[d.pay_month] = [];
-                    groups[d.pay_month].push(d);
-                });
-                return groups;
-            }, [debts]);
-
-            const [lastCustomRate, setLastCustomRate] = useState('7.5'); 
-            const [form, setForm] = useState({ 
-                title: '', amount: '', category: '🍲 餐饮', currency: 'LOCAL', rate: '7.5', date: getToday() 
-            });
-
-            useEffect(() => {
-                if (FIXED_RATE_CATEGORIES.includes(form.category)) {
-                    setForm(prev => ({ ...prev, rate: '1' }));
-                } else if (editingId === null) {
-                    setForm(prev => ({ ...prev, rate: lastCustomRate }));
-                }
-            }, [form.category, editingId]);
+            // Gold 状态
+            const [goldRecords, setGoldRecords] = useState([]);
+            const [currentGoldPrice, setCurrentGoldPrice] = useState('450');
+            const [goldEditingId, setGoldEditingId] = useState(null);
+            const [isGoldDeleteModalOpen, setIsGoldDeleteModalOpen] = useState(false);
+            const [goldForm, setGoldForm] = useState({ date: getToday(), grams: '', pricePerGram: '', type: '两人平分' });
 
             useEffect(() => { 
                 fetchTrips(); 
                 fetchDebts();
+                fetchGoldRecords();
             }, []);
 
-            useEffect(() => { if (currentTripId) fetchRecords(currentTripId); }, [currentTripId]);
+            useEffect(() => { 
+                if (currentTripId) fetchRecords(currentTripId); 
+            }, [currentTripId]);
 
-            async function fetchTrips() {
-                try {
-                    const { data } = await supabaseClient.from('trips').select('*').order('id', { ascending: false });
-                    if (data && data.length > 0) {
-                        setTrips(data);
-                        if (!currentTripId) setCurrentTripId(data[0].id);
-                    }
-                } finally {
-                    setIsLoading(false);
+            // --- Trip 逻辑 ---
+            const fetchTrips = async () => {
+                const { data } = await supabaseClient.from('trips').select('*').order('id', { ascending: false });
+                if (data && data.length > 0) {
+                    setTrips(data);
+                    if (!currentTripId) setCurrentTripId(data[0].id);
+                } else {
+                    setTrips([]);
                 }
-            }
+                setIsLoading(false);
+            };
 
-            async function fetchRecords(tid) {
+            const handleAddTrip = async () => {
+                if (!newTripName.trim()) return;
+                const { data, error } = await supabaseClient.from('trips').insert([{ name: newTripName.trim() }]).select();
+                if (!error) {
+                    setNewTripName('');
+                    fetchTrips();
+                }
+            };
+
+            const handleDeleteTrip = async (id) => {
+                if (!confirm('确定删除该旅行项目吗？相关的所有账单记录也将无法查询（数据仍保存在数据库中但不再显示）。')) return;
+                const { error } = await supabaseClient.from('trips').delete().eq('id', id);
+                if (!error) {
+                    if (currentTripId === id) setCurrentTripId(null);
+                    fetchTrips();
+                }
+            };
+
+            // --- Record 逻辑 ---
+            const fetchRecords = async (tid) => {
                 const { data } = await supabaseClient.from('records').select('*').eq('trip_id', tid).order('date', { ascending: false }).order('id', { ascending: false });
                 setRecords(data || []);
-            }
-
-            // --- 新增：删除记录功能 ---
-            const deleteRecord = async () => {
-                if (!editingId) return;
-                if (confirm('确定要删除这条记账记录吗？')) {
-                    const { error } = await supabaseClient
-                        .from('records')
-                        .delete()
-                        .eq('id', editingId);
-                    
-                    if (!error) {
-                        await fetchRecords(currentTripId);
-                        setEditingId(null);
-                        setForm({ ...form, title: '', amount: '', date: getToday() });
-                        setActiveTab('view');
-                    } else {
-                        alert('删除失败，请检查网络');
-                    }
-                }
             };
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (!form.title || !form.amount) return;
-                let targetTripId = currentTripId;
-                const payload = { 
-                    title: form.title, amount: Number(form.amount), category: form.category,
-                    currency: form.currency, rate: Number(form.rate) || 1, date: form.date,
-                    trip_id: targetTripId, payer: user, 
-                    time: editingId ? form.time : new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) 
-                };
-                if (editingId) { 
-                    await supabaseClient.from('records').update(payload).eq('id', editingId); 
-                    setEditingId(null);
-                } else { 
-                    await supabaseClient.from('records').insert([payload]); 
-                    if (!FIXED_RATE_CATEGORIES.includes(form.category)) setLastCustomRate(form.rate);
-                }
-                await fetchRecords(targetTripId);
-                setForm({ ...form, title: '', amount: '', date: getToday() });
+                if(!currentTripId) return alert('请先选择或创建一个旅行项目');
+                const payload = { ...form, amount: Number(form.amount), rate: Number(form.rate), trip_id: currentTripId, payer: user, time: editingId ? form.time : new Date().toLocaleTimeString('zh-CN', { hour12: false }) };
+                if (editingId) { await supabaseClient.from('records').update(payload).eq('id', editingId); }
+                else { await supabaseClient.from('records').insert([payload]); }
+                fetchRecords(currentTripId);
+                setForm({ title: '', amount: '', category: '🍲 餐饮', rate: '1', date: getToday() });
+                setEditingId(null);
                 setActiveTab('view');
+            };
+
+            const deleteRecord = async () => {
+                await supabaseClient.from('records').delete().eq('id', editingId);
+                setIsDeleteModalOpen(false);
+                setEditingId(null);
+                fetchRecords(currentTripId);
+                setActiveTab('view');
+            };
+
+            // --- Gold 逻辑 ---
+            const fetchGoldRecords = async () => {
+                const { data } = await supabaseClient.from('gold_assets').select('*').order('date', { ascending: false });
+                setGoldRecords(data || []);
+            };
+
+            const addOrUpdateGoldRecord = async (e) => {
+                e.preventDefault();
+                const totalCost = parseFloat(goldForm.grams) * parseFloat(goldForm.pricePerGram);
+                const payload = {
+                    date: goldForm.date,
+                    grams: parseFloat(goldForm.grams),
+                    "pricePerGram": parseFloat(goldForm.pricePerGram),
+                    total_cost: totalCost,
+                    type: goldForm.type
+                };
+                if (goldEditingId) {
+                    await supabaseClient.from('gold_assets').update(payload).eq('id', goldEditingId);
+                } else {
+                    await supabaseClient.from('gold_assets').insert([payload]);
+                }
+                setGoldEditingId(null);
+                setGoldForm({ date: getToday(), grams: '', pricePerGram: '', type: '两人平分' });
+                fetchGoldRecords();
+            };
+
+            const deleteGoldRecord = async () => {
+                if (!goldEditingId) return;
+                await supabaseClient.from('gold_assets').delete().eq('id', goldEditingId);
+                setIsGoldDeleteModalOpen(false);
+                setGoldEditingId(null);
+                fetchGoldRecords();
+            };
+
+            const goldStats = useMemo(() => {
+                let gfGrams = 0, gfCost = 0, bfGrams = 0, bfCost = 0;
+                goldRecords.forEach(r => {
+                    const g = Number(r.grams), c = Number(r.total_cost);
+                    if (r.type === '两人平分') { gfGrams += g/2; gfCost += c/2; bfGrams += g/2; bfCost += c/2; }
+                    else if (r.type === '男友个人') { bfGrams += g; bfCost += c; }
+                    else if (r.type === '女友个人') { gfGrams += g; gfCost += c; }
+                });
+                const totalGrams = gfGrams + bfGrams;
+                const totalCost = gfCost + bfCost;
+                return { totalGrams, totalCost, profit: (totalGrams * Number(currentGoldPrice)) - totalCost, gfGrams, gfCost, bfGrams, bfCost };
+            }, [goldRecords, currentGoldPrice]);
+
+            const [form, setForm] = useState({ title: '', amount: '', category: '🍲 餐饮', rate: '1', date: getToday() });
+
+            // --- Settle 逻辑 ---
+            const fetchDebts = async () => {
+                const { data } = await supabaseClient.from('settle_records').select('*').order('id', { ascending: false });
+                setDebts(data || []);
+            };
+            const addDebt = async (e) => {
+                e.preventDefault();
+                const now = new Date();
+                await supabaseClient.from('settle_records').insert([{ title: debtForm.title, amount: Number(debtForm.amount), pay_month: now.toLocaleString('default', { month: 'short', year: 'numeric' }), status: 'pending' }]);
+                setDebtForm({ title: '', amount: '' });
+                fetchDebts();
+            };
+            const toggleDebtStatus = async (id, status) => {
+                await supabaseClient.from('settle_records').update({ status: status === 'pending' ? 'paid' : 'pending' }).eq('id', id);
+                fetchDebts();
+            };
+            const updateSettleRecord = async (e) => {
+                e.preventDefault();
+                await supabaseClient.from('settle_records').update({ title: debtForm.title, amount: Number(debtForm.amount) }).eq('id', settleEditingId);
+                setIsSettleEditModalOpen(false);
+                setDebtForm({ title: '', amount: '' });
+                setSettleEditingId(null);
+                fetchDebts();
+            };
+            const deleteSettleRecord = async () => {
+                if(confirm('确定要删除这条结算记录吗？')) {
+                    await supabaseClient.from('settle_records').delete().eq('id', settleEditingId);
+                    setIsSettleEditModalOpen(false);
+                    setSettleEditingId(null);
+                    fetchDebts();
+                }
             };
 
             const stats = useMemo(() => {
                 return records.reduce((acc, r) => {
-                    const rate = Number(r.rate) || 1;
-                    const valMYR = Number(r.amount) / rate;
-                    if (r.payer === '女友支付') acc.gf += valMYR; else acc.bf += valMYR;
+                    const val = Number(r.amount) / (Number(r.rate) || 1);
+                    if (r.payer === '女友支付') acc.gf += val; else acc.bf += val;
                     return acc;
                 }, { gf: 0, bf: 0 });
             }, [records]);
@@ -196,76 +226,70 @@
                 records.forEach(r => {
                     if (!groups[r.date]) groups[r.date] = { list: [], dayTotal: 0 };
                     groups[r.date].list.push(r);
-                    const rate = Number(r.rate) || 1;
-                    groups[r.date].dayTotal += (Number(r.amount) / rate);
+                    groups[r.date].dayTotal += (Number(r.amount) / (Number(r.rate) || 1));
                 });
                 return groups;
             }, [records]);
 
-            const currentTrip = trips.find(t => t.id == currentTripId);
-            const currentTripName = currentTrip?.name || '开始记账';
-
-            if (isLoading) return <div className="h-screen flex items-center justify-center font-black text-indigo-500 italic text-2xl">LOADING...</div>;
+            if (isLoading) return <div className="h-screen flex items-center justify-center font-black text-indigo-500 italic text-2xl animate-pulse">LOADING...</div>;
 
             return (
                 <div className="min-h-screen pb-32">
                     {/* Header */}
-                    <div className="bg-slate-900 pt-10 pb-10 px-6 rounded-b-[40px] shadow-2xl text-white relative z-20">
-                        <div className="flex justify-between items-center mb-10 relative z-30">
-                            <div className="flex items-center gap-2">
+                    <div className="bg-slate-900 pt-12 pb-10 px-6 rounded-b-[40px] shadow-2xl text-white relative z-[60]">
+                        {(activeTab === 'add' || activeTab === 'view') && (
+                            <div className="flex items-center justify-center gap-2 mb-6">
                                 <div className="relative">
-                                    <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="flex items-center gap-2">
-                                        <span className="text-indigo-400 font-black text-2xl tracking-tight max-w-[180px] truncate">{currentTripName}</span>
-                                        <svg className={`w-5 h-5 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
+                                    <button onClick={() => setIsTripDropdownOpen(!isTripDropdownOpen)} className="flex items-center gap-2 bg-white/10 px-4 py-2 rounded-full border border-white/10 active:scale-95 transition-all">
+                                        <span className="text-indigo-300 font-black text-sm tracking-widest uppercase truncate max-w-[120px]">{trips.find(t=>t.id==currentTripId)?.name || '选择旅行'}</span>
+                                        <svg className={`w-4 h-4 text-indigo-400 transition-transform ${isTripDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
                                     </button>
-                                    {isDropdownOpen && (
-                                        <>
-                                            <div className="fixed inset-0" onClick={() => setIsDropdownOpen(false)}></div>
-                                            <div className="absolute top-12 left-0 w-72 bg-slate-800 border border-slate-700 rounded-3xl shadow-2xl py-3 z-40 menu-drop">
-                                                <div className="max-h-64 overflow-y-auto custom-scrollbar">
-                                                    {trips.map(t => (
-                                                        <div key={t.id} onClick={() => { setCurrentTripId(t.id); setIsDropdownOpen(false); }} className={`flex justify-between items-center px-6 py-4 text-sm font-bold ${currentTripId == t.id ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}>
-                                                            <span className="truncate flex-1">{t.name}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
+                                    {isTripDropdownOpen && (
+                                        <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-3xl shadow-2xl py-2 z-[70] menu-drop overflow-hidden">
+                                            <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                                                {trips.map(t => (
+                                                    <button key={t.id} onClick={() => { setCurrentTripId(t.id); setIsTripDropdownOpen(false); }} className={`w-full px-6 py-4 text-left text-xs font-black uppercase tracking-widest ${currentTripId === t.id ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 active:bg-slate-50'}`}>{t.name}</button>
+                                                ))}
                                             </div>
-                                        </>
+                                        </div>
                                     )}
                                 </div>
+                                {/* 旅行项目管理按钮 */}
+                                <button onClick={() => setIsTripManagerOpen(true)} className="w-10 h-10 flex items-center justify-center bg-white/5 rounded-full text-indigo-400 border border-white/5">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                                </button>
                             </div>
-                        </div>
-                        <div className="text-center mb-10">
-                            <p className="text-slate-500 text-[10px] uppercase tracking-[0.4em] mb-2 font-black">Total Expenditure</p>
-                            <div className="flex flex-col items-center">
+                        )}
+
+                        {activeTab === 'gold' ? (
+                            <div className="text-center">
+                                <p className="text-amber-400 text-[10px] uppercase tracking-[0.4em] mb-2 font-black">Gold Vault</p>
+                                <div className="flex items-baseline justify-center gap-1">
+                                    <span className="text-6xl font-black italic tracking-tighter">{goldStats.totalGrams.toFixed(2)}</span>
+                                    <span className="text-2xl font-black text-amber-500 italic">G</span>
+                                </div>
+                            </div>
+                        ) : (activeTab === 'add' || activeTab === 'view') ? (
+                            <div className="text-center">
+                                <p className="text-slate-500 text-[10px] uppercase tracking-[0.4em] mb-2 font-black">Expenditure</p>
                                 <div className="flex items-baseline justify-center gap-1">
                                     <span className="text-2xl font-black text-indigo-500 italic">RM</span>
-                                    <span className="text-6xl font-black italic tracking-tighter text-white">{(stats.gf + stats.bf).toFixed(2)}</span>
+                                    <span className="text-6xl font-black italic tracking-tighter">{(stats.gf + stats.bf).toFixed(2)}</span>
                                 </div>
-                                <div className="mt-2 bg-indigo-500/20 px-3 py-1 rounded-full">
-                                    <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">一人应付: RM {((stats.gf + stats.bf) / 2).toFixed(2)}</p>
+                                <div className="grid grid-cols-2 gap-4 mt-8">
+                                    <div className="bg-rose-500/10 border border-rose-500/20 rounded-[24px] p-4"><p className="text-rose-400 text-[9px] font-black uppercase mb-1">GF</p><p className="text-xl font-black">RM {stats.gf.toFixed(0)}</p></div>
+                                    <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-[24px] p-4"><p className="text-indigo-400 text-[9px] font-black uppercase mb-1">YS</p><p className="text-xl font-black">RM {stats.bf.toFixed(0)}</p></div>
                                 </div>
                             </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="bg-rose-500/10 border border-rose-500/20 rounded-[30px] p-5 text-center">
-                                <p className="text-rose-400 text-[9px] font-black uppercase mb-1 tracking-widest opacity-70">FT Spending</p>
-                                <p className="text-2xl font-black text-rose-50 tracking-tight">RM {stats.gf.toFixed(2)}</p>
-                            </div>
-                            <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-[30px] p-5 text-center">
-                                <p className="text-indigo-400 text-[9px] font-black uppercase mb-1 tracking-widest opacity-70">YS Spending</p>
-                                <p className="text-2xl font-black text-indigo-50 tracking-tight">RM {stats.bf.toFixed(2)}</p>
-                            </div>
-                        </div>
+                        ) : null}
                     </div>
 
-                    {/* Content Container */}
-                    <div className="max-w-md mx-auto px-5 pt-8 relative z-10">
+                    <div className="max-w-md mx-auto px-5 pt-8">
                         {activeTab === 'add' ? (
-                            <div className="bg-white rounded-[40px] p-8 shadow-2xl border border-slate-100 animate-slide-up">
+                            <div className="bg-white rounded-[40px] p-8 shadow-2xl border border-slate-100 animate-slide-up relative">
                                 <div className="flex bg-slate-100 p-1.5 rounded-3xl mb-8">
-                                    <button type="button" onClick={() => setUser('女友支付')} className={`flex-1 py-4 rounded-2xl text-[10px] font-black tracking-widest transition-all ${user === '女友支付' ? 'bg-rose-500 text-white shadow-lg' : 'text-slate-400'}`}>FT PAID</button>
-                                    <button type="button" onClick={() => setUser('男友支付')} className={`flex-1 py-4 rounded-2xl text-[10px] font-black tracking-widest transition-all ${user === '男友支付' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>YS PAID</button>
+                                    <button type="button" onClick={() => setUser('女友支付')} className={`flex-1 py-4 rounded-2xl text-[10px] font-black transition-all ${user === '女友支付' ? 'bg-rose-500 text-white shadow-lg' : 'text-slate-400'}`}>FT PAID</button>
+                                    <button type="button" onClick={() => setUser('男友支付')} className={`flex-1 py-4 rounded-2xl text-[10px] font-black transition-all ${user === '男友支付' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}>YS PAID</button>
                                 </div>
                                 <form onSubmit={handleSubmit} className="space-y-6">
                                     <div className="flex gap-3">
@@ -275,14 +299,15 @@
                                         </div>
                                         <div className="w-1/2 relative">
                                             <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Category</label>
-                                            <button type="button" onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold border border-slate-100 flex justify-between items-center">
+                                            <button type="button" onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-black border border-slate-100 flex justify-between items-center outline-none">
                                                 <span className="truncate">{form.category}</span>
+                                                <svg className={`w-4 h-4 text-slate-400 transition-transform ${isCategoryPickerOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
                                             </button>
                                             {isCategoryPickerOpen && (
-                                                <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-100 rounded-3xl shadow-2xl z-[70] py-2 menu-drop overflow-hidden">
-                                                    <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                                                <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-3xl shadow-2xl z-[999] py-2 menu-drop">
+                                                    <div className="max-h-64 overflow-y-auto custom-scrollbar">
                                                         {CATEGORIES.map(cat => (
-                                                            <button key={cat} type="button" onClick={() => { setForm({...form, category: cat}); setIsCategoryPickerOpen(false); }} className={`w-full text-left px-5 py-3.5 text-xs font-bold ${form.category === cat ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}>{cat}</button>
+                                                            <button key={cat} type="button" onClick={() => { setForm({...form, category: cat}); setIsCategoryPickerOpen(false); }} className={`w-full text-left px-6 py-4 text-xs font-black ${form.category === cat ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600'}`}>{cat}</button>
                                                         ))}
                                                     </div>
                                                 </div>
@@ -290,147 +315,214 @@
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Item Title</label>
+                                        <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Title</label>
                                         <input placeholder="输入详情..." className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold border border-slate-100 outline-none" value={form.title} onChange={e => setForm({...form, title: e.target.value})} />
                                     </div>
                                     <div className="flex gap-3">
-                                        <div className="flex-1">
-                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase tracking-widest">Amount</label>
-                                            <input type="number" step="any" className="w-full bg-slate-50 p-4 rounded-2xl font-black text-2xl border border-slate-100 outline-none" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} />
-                                        </div>
-                                        <div className="w-[120px]">
-                                            <label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase text-center">Rate</label>
-                                            <input type="number" step="any" readOnly={FIXED_RATE_CATEGORIES.includes(form.category)} className={`w-full p-4 rounded-2xl font-mono text-sm text-center border ${FIXED_RATE_CATEGORIES.includes(form.category) ? 'bg-slate-100 text-slate-400' : 'bg-white text-indigo-600 border-indigo-100 font-bold'}`} value={form.rate} onChange={e => setForm({...form, rate: e.target.value})} />
-                                        </div>
+                                        <div className="flex-1"><label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Amount</label><input type="number" step="any" className="w-full bg-slate-50 p-4 rounded-2xl font-black text-2xl border border-slate-100 outline-none" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} /></div>
+                                        <div className="w-[100px]"><label className="text-[10px] font-black text-slate-400 ml-1 mb-1 block uppercase">Rate</label><input type="number" step="any" className="w-full bg-white p-4 rounded-2xl font-bold text-center border border-indigo-100 text-indigo-600 outline-none" value={form.rate} onChange={e => setForm({...form, rate: e.target.value})} /></div>
                                     </div>
-                                    
-                                    <div className="space-y-3 pt-2">
-                                        <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl active:scale-95 transition-all ${user === '女友支付' ? 'bg-rose-500' : 'bg-indigo-600'}`}>
-                                            {editingId ? 'UPDATE TRANSACTION' : 'SAVE TRANSACTION'}
-                                        </button>
-                                        
-                                        {editingId && (
-                                            <button 
-                                                type="button" 
-                                                onClick={deleteRecord}
-                                                className="w-full text-rose-500 font-black py-4 rounded-[24px] border-2 border-rose-100 bg-rose-50/30 active:scale-95 transition-all text-[10px] tracking-[0.2em]"
-                                            >
-                                                DELETE THIS RECORD
-                                            </button>
-                                        )}
-                                    </div>
+                                    <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl active:scale-95 transition-all ${user === '女友支付' ? 'bg-rose-500 shadow-rose-200' : 'bg-indigo-600 shadow-indigo-200'}`}>
+                                        {editingId ? 'CONFIRM UPDATE' : 'SAVE RECORD'}
+                                    </button>
+                                    {editingId && (
+                                        <button type="button" onClick={() => setIsDeleteModalOpen(true)} className="w-full text-rose-500 font-black py-4 rounded-[24px] border-2 border-rose-100 mt-2">DELETE RECORD</button>
+                                    )}
                                 </form>
                             </div>
                         ) : activeTab === 'view' ? (
-                            <div className="space-y-10">
-                                {Object.keys(groupedRecords).map(date => (
-                                    <div key={date}>
-                                        <div className="flex justify-between items-end mb-5 px-2">
-                                            <div className="flex items-center gap-3"><div className="h-1 w-4 bg-indigo-500 rounded-full"></div><h3 className="text-xs font-black text-slate-800 tracking-tighter">{date}</h3></div>
-                                            <div className="bg-indigo-50 px-3 py-1.5 rounded-2xl text-right">
-                                                <p className="text-[10px] font-black text-indigo-600">RM {groupedRecords[date].dayTotal.toFixed(2)}</p>
-                                                <p className="text-[8px] font-bold text-indigo-300 leading-none">一人 RM {(groupedRecords[date].dayTotal / 2).toFixed(2)}</p>
-                                            </div>
-                                        </div>
-                                        <div className="space-y-4">
-                                            {groupedRecords[date].list.map(r => (
-                                                <div key={r.id} onClick={() => {setForm(r); setEditingId(r.id); setActiveTab('add'); setUser(r.payer);}} className="bg-white p-6 rounded-[30px] flex justify-between items-center shadow-sm border border-slate-100 active:scale-95 transition-all">
-                                                    <div className="flex items-center gap-4">
-                                                        <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center text-xl">{r.category.substring(0,2)}</div>
-                                                        <div><p className="font-bold text-sm text-slate-800 mb-2">{r.title}</p><span className={`text-[8px] px-2 py-0.5 rounded font-black ${r.payer === '女友支付' ? 'bg-rose-50 text-rose-500' : 'bg-indigo-50 text-indigo-500'}`}>{r.payer === '女友支付' ? 'GF' : 'BF'}</span></div>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <p className="font-black text-slate-900 text-lg italic tracking-tighter">RM {(Number(r.amount) / (Number(r.rate) || 1)).toFixed(2)}</p>
-                                                        <p className="text-[9px] font-bold text-slate-400 italic">一人 RM {( (Number(r.amount) / (Number(r.rate) || 1)) / 2 ).toFixed(2)}</p>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            /* Settle Tab */
-                            <div className="space-y-6 animate-slide-up pb-10">
-                                <div className="bg-indigo-600 rounded-[40px] p-8 text-white shadow-2xl relative overflow-hidden">
-                                    <div className="relative z-10">
-                                        <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-60 mb-2">Total Owed to BF</p>
-                                        <p className="text-4xl font-black italic">RM {totalPending.toFixed(2)}</p>
-                                    </div>
-                                </div>
-
-                                <div className="flex bg-white p-1.5 rounded-3xl shadow-sm border border-slate-100">
-                                    <button onClick={() => setSettleSubTab('pending')} className={`flex-1 py-3 rounded-2xl text-[10px] font-black tracking-widest transition-all ${settleSubTab === 'pending' ? 'bg-slate-900 text-white' : 'text-slate-400'}`}>PENDING ⏳</button>
-                                    <button onClick={() => setSettleSubTab('paid')} className={`flex-1 py-3 rounded-2xl text-[10px] font-black tracking-widest transition-all ${settleSubTab === 'paid' ? 'bg-slate-900 text-white' : 'text-slate-400'}`}>PAID HISTORY ✅</button>
-                                </div>
-
-                                {settleSubTab === 'pending' ? (
-                                    <>
-                                        <div className="bg-white rounded-[40px] p-6 shadow-xl border border-slate-100">
-                                            <h3 className="text-xs font-black text-slate-800 mb-4 px-2 uppercase tracking-widest italic">New Debt Item</h3>
-                                            <form onSubmit={addDebt} className="flex gap-2">
-                                                <input className="flex-1 bg-slate-50 p-4 rounded-2xl text-xs font-bold border border-slate-100 outline-none" placeholder="项目 (如: 12月房租)" value={debtForm.title} onChange={e => setDebtForm({...debtForm, title: e.target.value})} />
-                                                <input type="number" className="w-24 bg-slate-50 p-4 rounded-2xl text-xs font-black border border-slate-100 outline-none" placeholder="RM" value={debtForm.amount} onChange={e => setDebtForm({...debtForm, amount: e.target.value})} />
-                                                <button className="bg-indigo-600 text-white p-4 rounded-2xl shadow-lg active:scale-95 transition-all"><svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg></button>
-                                            </form>
-                                        </div>
-                                        <div className="space-y-3">
-                                            {debts.filter(d => d.status === 'pending').map(debt => (
-                                                <div key={debt.id} className="bg-white p-5 rounded-[24px] flex justify-between items-center shadow-sm border border-slate-50">
-                                                    <div className="flex items-center gap-4">
-                                                        <button onClick={() => toggleDebtStatus(debt.id, debt.status)} className="w-8 h-8 rounded-full border-2 border-slate-100 flex items-center justify-center text-slate-200 hover:border-green-500 hover:text-green-500 transition-all"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="4" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></button>
-                                                        <div><p className="font-bold text-sm text-slate-800">{debt.title}</p><p className="text-[10px] text-slate-400 font-bold">{debt.pay_month}</p></div>
-                                                    </div>
-                                                    <div className="flex items-center gap-4">
-                                                        <p className="font-black text-indigo-600 text-base italic">RM {Number(debt.amount).toFixed(2)}</p>
-                                                        <button onClick={() => deleteDebt(debt.id)} className="text-slate-200 hover:text-rose-500"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg></button>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </>
+                            <div className="space-y-8 animate-slide-up">
+                                {Object.keys(groupedRecords).length === 0 ? (
+                                    <div className="text-center py-20 opacity-20 font-black italic uppercase tracking-widest text-slate-400">No Records Found</div>
                                 ) : (
-                                    <div className="space-y-8">
-                                        {Object.keys(groupedPaidDebts).map(month => (
-                                            <div key={month} className="space-y-3">
-                                                <div className="flex items-center gap-2 px-2">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{month}</span>
-                                                    <div className="h-[1px] flex-1 bg-slate-100"></div>
-                                                    <span className="text-[10px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full">Total Paid: RM {groupedPaidDebts[month].reduce((s, d) => s + Number(d.amount), 0).toFixed(2)}</span>
-                                                </div>
-                                                {groupedPaidDebts[month].map(debt => (
-                                                    <div key={debt.id} className="bg-slate-100/50 p-5 rounded-[24px] flex justify-between items-center opacity-60">
+                                    Object.keys(groupedRecords).map(date => (
+                                        <div key={date}>
+                                            <div className="flex justify-between items-center mb-4 px-2">
+                                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{date}</h3>
+                                                <span className="text-[10px] font-black bg-slate-200 px-2 py-1 rounded-lg">RM {groupedRecords[date].dayTotal.toFixed(2)}</span>
+                                            </div>
+                                            <div className="space-y-3">
+                                                {groupedRecords[date].list.map(r => (
+                                                    <div key={r.id} onClick={() => {setForm(r); setEditingId(r.id); setActiveTab('add'); setUser(r.payer);}} className="bg-white p-5 rounded-[24px] flex justify-between items-center shadow-sm border border-slate-100 active:scale-95 transition-all">
                                                         <div className="flex items-center gap-4">
-                                                            <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center text-white"><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="4" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
-                                                            <div><p className="font-bold text-sm text-slate-500 line-through">{debt.title}</p></div>
+                                                            <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-lg">{r.category.substring(0,2)}</div>
+                                                            <div><p className="font-bold text-sm text-slate-800">{r.title}</p><p className={`text-[8px] font-black uppercase mt-0.5 ${r.payer === '女友支付' ? 'text-rose-400' : 'text-indigo-400'}`}>{r.payer === '女友支付' ? 'GF' : 'YS'}</p></div>
                                                         </div>
-                                                        <div className="flex items-center gap-4">
-                                                            <p className="font-black text-slate-500 text-base italic">RM {Number(debt.amount).toFixed(2)}</p>
-                                                            <button onClick={() => toggleDebtStatus(debt.id, debt.status)} className="text-slate-300 hover:text-indigo-500 text-[10px] font-black uppercase">Undo</button>
-                                                        </div>
+                                                        <p className="font-black text-slate-900 text-lg italic tracking-tighter">RM {(Number(r.amount) / (Number(r.rate) || 1)).toFixed(2)}</p>
                                                     </div>
                                                 ))}
                                             </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        ) : activeTab === 'gold' ? (
+                            <div className="space-y-6 animate-slide-up">
+                                <div className="bg-white rounded-[30px] p-6 shadow-xl border border-amber-100">
+                                    <div className="flex justify-between items-center mb-4"><h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest italic">Live Market Price</h3><span className={`font-black text-sm ${goldStats.profit >= 0 ? 'text-green-500' : 'text-rose-500'}`}>RM {goldStats.profit.toFixed(2)}</span></div>
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-xs font-black text-slate-800">1G = RM</span>
+                                        <input type="number" className="flex-1 bg-amber-50 p-3 rounded-xl font-black text-amber-600 border-none outline-none text-center" value={currentGoldPrice} onChange={e => setCurrentGoldPrice(e.target.value)} />
+                                    </div>
+                                </div>
+                                <form onSubmit={addOrUpdateGoldRecord} className="bg-white rounded-[30px] p-6 shadow-xl space-y-4">
+                                    <div className="flex bg-slate-100 p-1 rounded-2xl">
+                                        {['两人平分', '男友个人', '女友个人'].map(opt => (
+                                            <button key={opt} type="button" onClick={() => setGoldForm({...goldForm, type: opt})} className={`flex-1 py-2 rounded-xl text-[9px] font-black transition-all ${goldForm.type === opt ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400'}`}>{opt}</button>
                                         ))}
                                     </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <input type="number" step="any" placeholder="Grams" className="bg-slate-50 p-4 rounded-2xl font-black outline-none" value={goldForm.grams} onChange={e => setGoldForm({...goldForm, grams: e.target.value})} />
+                                        <input type="number" step="any" placeholder="Price/G" className="bg-slate-50 p-4 rounded-2xl font-black outline-none" value={goldForm.pricePerGram} onChange={e => setGoldForm({...goldForm, pricePerGram: e.target.value})} />
+                                    </div>
+                                    <button className="w-full bg-amber-500 text-white font-black py-4 rounded-2xl shadow-lg uppercase tracking-widest text-xs">{goldEditingId ? 'Update Record' : 'Save Record'}</button>
+                                </form>
+                                <div className="space-y-3">
+                                    {goldRecords.map(r => (
+                                        <div key={r.id} onClick={() => { setGoldForm(r); setGoldEditingId(r.id); window.scrollTo(0,0); }} className="bg-white p-5 rounded-[24px] flex justify-between items-center shadow-sm border border-slate-100 active:scale-95 transition-all">
+                                            <div className="flex items-center gap-3">
+                                                <div className="text-xl">💰</div>
+                                                <div><p className="font-black text-sm">{r.grams}g</p><p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{r.date} • {r.type}</p></div>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="font-black italic text-slate-900">RM {Number(r.total_cost).toFixed(2)}</p>
+                                                <button onClick={(e) => { e.stopPropagation(); setGoldEditingId(r.id); setIsGoldDeleteModalOpen(true); }} className="text-rose-500 text-[10px] font-black uppercase p-2 hover:bg-rose-50 rounded-lg transition-colors">Delete</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            /* SETTLE 页面 */
+                            <div className="space-y-6 animate-slide-up">
+                                <div className="bg-indigo-600 rounded-[30px] p-8 text-white shadow-2xl relative overflow-hidden">
+                                    <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-60 mb-2">Total Owed</p>
+                                    <p className="text-4xl font-black italic tracking-tighter">RM {debts.filter(d => d.status === 'pending').reduce((sum, d) => sum + Number(d.amount), 0).toFixed(2)}</p>
+                                </div>
+                                <div className="flex bg-white p-1 rounded-2xl border border-slate-100 shadow-sm">
+                                    <button onClick={() => setSettleTab('pending')} className={`flex-1 py-3 rounded-xl text-[10px] font-black tracking-widest ${settleTab === 'pending' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400'}`}>PENDING</button>
+                                    <button onClick={() => setSettleTab('paid')} className={`flex-1 py-3 rounded-xl text-[10px] font-black tracking-widest ${settleTab === 'paid' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400'}`}>PAID</button>
+                                </div>
+                                {settleTab === 'pending' && (
+                                    <form onSubmit={addDebt} className="bg-white p-4 rounded-3xl shadow-xl flex gap-2">
+                                        <input className="flex-1 bg-slate-50 p-4 rounded-2xl text-xs font-black outline-none" placeholder="项目" value={debtForm.title} onChange={e => setDebtForm({...debtForm, title: e.target.value})} />
+                                        <input type="number" className="w-24 bg-slate-50 p-4 rounded-2xl text-xs font-black outline-none" placeholder="RM" value={debtForm.amount} onChange={e => setDebtForm({...debtForm, amount: e.target.value})} />
+                                        <button className="bg-indigo-600 text-white px-6 rounded-2xl shadow-lg active:scale-95"><svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg></button>
+                                    </form>
                                 )}
+                                <div className="space-y-3">
+                                    {debts.filter(d => d.status === settleTab).map(d => (
+                                        <div key={d.id} onClick={() => { setDebtForm(d); setSettleEditingId(d.id); setIsSettleEditModalOpen(true); }} className="bg-white p-5 rounded-[24px] flex justify-between items-center border border-slate-100 shadow-sm active:scale-95 transition-all">
+                                            <div className="flex items-center gap-4">
+                                                <button onClick={(e) => { e.stopPropagation(); toggleDebtStatus(d.id, d.status); }} className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${d.status === 'paid' ? 'bg-green-500 text-white' : 'bg-slate-100 text-slate-300'}`}>
+                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="4" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                                                </button>
+                                                <div><p className={`font-bold text-sm ${d.status === 'paid' ? 'text-slate-400 line-through' : ''}`}>{d.title}</p><p className="text-[8px] font-black text-slate-300 uppercase">{d.pay_month}</p></div>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className={`font-black text-lg italic tracking-tighter ${d.status === 'paid' ? 'text-slate-300' : 'text-indigo-600'}`}>RM {Number(d.amount).toFixed(2)}</p>
+                                                <p className="text-[8px] font-black text-slate-300 uppercase">点击编辑</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
                     </div>
 
-                    {/* Footer */}
-                    <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-100 px-6 py-6 flex justify-around items-center z-50 pb-[calc(env(safe-area-inset-bottom)+20px)]">
-                        <button onClick={() => setActiveTab('view')} className="flex flex-col items-center gap-2">
-                            <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${activeTab === 'view' ? 'bg-indigo-600 text-white scale-110 shadow-lg' : 'bg-slate-100 text-slate-400'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"/></svg></div>
-                            <span className={`text-[8px] font-black tracking-widest ${activeTab === 'view' ? 'text-indigo-600' : 'text-slate-300'}`}>LIST</span>
+                    {/* Trip 管理弹窗 (新增/删除项目) */}
+                    {isTripManagerOpen && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center px-6 bg-slate-900/80 backdrop-blur-md">
+                            <div className="bg-white w-full max-w-sm rounded-[40px] p-8 animate-slide-up shadow-2xl">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-lg font-black uppercase italic text-slate-900">Manage Trips</h3>
+                                    <button onClick={() => setIsTripManagerOpen(false)} className="text-slate-300 hover:text-slate-900 transition-colors">
+                                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12"/></svg>
+                                    </button>
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="flex gap-2">
+                                        <input placeholder="New Trip Name" className="flex-1 bg-slate-50 p-4 rounded-2xl text-sm font-bold border border-slate-100 outline-none focus:ring-2 ring-indigo-500/20" value={newTripName} onChange={e => setNewTripName(e.target.value)} />
+                                        <button onClick={handleAddTrip} className="bg-indigo-600 text-white px-5 rounded-2xl font-black active:scale-95 transition-all">ADD</button>
+                                    </div>
+                                    <div className="max-h-60 overflow-y-auto custom-scrollbar space-y-2 pt-4">
+                                        {trips.map(t => (
+                                            <div key={t.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl group">
+                                                <span className="font-bold text-slate-700">{t.name}</span>
+                                                <button onClick={() => handleDeleteTrip(t.id)} className="text-rose-300 hover:text-rose-500 transition-colors">
+                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Gold 删除确认弹窗 */}
+                    {isGoldDeleteModalOpen && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center px-6 bg-slate-900/60 backdrop-blur-sm">
+                            <div className="bg-white w-full max-w-sm rounded-[40px] p-8 text-center animate-slide-up">
+                                <h3 className="text-xl font-black mb-6 uppercase italic tracking-widest text-slate-900 underline decoration-amber-500">Confirm Delete Gold Record?</h3>
+                                <div className="space-y-3">
+                                    <button onClick={deleteGoldRecord} className="w-full bg-rose-500 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition-all">YES, DELETE IT</button>
+                                    <button onClick={() => { setIsGoldDeleteModalOpen(false); setGoldEditingId(null); }} className="w-full bg-slate-100 text-slate-400 font-black py-4 rounded-2xl active:scale-95 transition-all">CANCEL</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Settle 编辑弹窗 */}
+                    {isSettleEditModalOpen && (
+                        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-sm">
+                            <div className="bg-white w-full max-w-md rounded-t-[40px] sm:rounded-[40px] p-8 animate-slide-up shadow-2xl">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-lg font-black uppercase tracking-widest italic text-slate-900">编辑结算项目</h3>
+                                    <button onClick={() => setIsSettleEditModalOpen(false)} className="text-slate-300"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M6 18L18 6M6 6l12 12"/></svg></button>
+                                </div>
+                                <form onSubmit={updateSettleRecord} className="space-y-4">
+                                    <input className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold border border-slate-100 outline-none" placeholder="项目名称" value={debtForm.title} onChange={e => setDebtForm({...debtForm, title: e.target.value})} />
+                                    <input type="number" className="w-full bg-slate-50 p-4 rounded-2xl text-lg font-black border border-slate-100 outline-none" placeholder="金额 RM" value={debtForm.amount} onChange={e => setDebtForm({...debtForm, amount: e.target.value})} />
+                                    <div className="flex gap-3 pt-4">
+                                        <button type="button" onClick={deleteSettleRecord} className="flex-1 bg-rose-50 text-rose-500 font-black py-4 rounded-2xl uppercase text-xs">删除记录</button>
+                                        <button type="submit" className="flex-[2] bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-lg uppercase text-xs">保存修改</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 记账记录删除弹窗 */}
+                    {isDeleteModalOpen && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center px-6 bg-slate-900/60 backdrop-blur-sm">
+                            <div className="bg-white w-full max-w-sm rounded-[40px] p-8 text-center animate-slide-up">
+                                <h3 className="text-xl font-black mb-6 uppercase italic tracking-widest text-slate-900 underline decoration-rose-500">Confirm Delete?</h3>
+                                <div className="space-y-3">
+                                    <button onClick={deleteRecord} className="w-full bg-rose-500 text-white font-black py-4 rounded-2xl">YES, DELETE IT</button>
+                                    <button onClick={() => setIsDeleteModalOpen(false)} className="w-full bg-slate-100 text-slate-400 font-black py-4 rounded-2xl">CANCEL</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Bottom Nav */}
+                    <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 flex justify-between items-center z-[50] pb-[calc(env(safe-area-inset-bottom)+15px)]">
+                        <button onClick={() => setActiveTab('add')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'add' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}>
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${activeTab === 'add' ? 'bg-indigo-600 text-white shadow-xl' : 'bg-slate-50'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg></div>
+                            <span className="text-[8px] font-black uppercase tracking-widest">ADD</span>
                         </button>
-                        <button onClick={() => { setEditingId(null); setForm({...form, title: '', amount: '', date: getToday()}); setActiveTab('add'); }} className="flex flex-col items-center gap-2 -mt-8">
-                            <div className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl transition-all ${activeTab === 'add' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-900 text-white'}`}><svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg></div>
-                            <span className={`text-[8px] font-black tracking-widest ${activeTab === 'add' ? 'text-indigo-600' : 'text-slate-300'}`}>ADD</span>
+                        <button onClick={() => setActiveTab('view')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'view' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}>
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${activeTab === 'view' ? 'bg-indigo-600 text-white shadow-xl' : 'bg-slate-50'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"/></svg></div>
+                            <span className="text-[8px] font-black uppercase tracking-widest">LIST</span>
                         </button>
-                        <button onClick={() => setActiveTab('settle')} className="flex flex-col items-center gap-2">
-                            <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${activeTab === 'settle' ? 'bg-indigo-600 text-white scale-110 shadow-lg' : 'bg-slate-100 text-slate-400'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2M12 8V7m0 1v8m0 0v1"/></svg></div>
-                            <span className={`text-[8px] font-black tracking-widest ${activeTab === 'settle' ? 'text-indigo-600' : 'text-slate-300'}`}>SETTLE</span>
+                        <button onClick={() => setActiveTab('gold')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'gold' ? 'text-amber-600 scale-110' : 'text-slate-300'}`}>
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${activeTab === 'gold' ? 'bg-amber-500 text-white shadow-xl' : 'bg-slate-50'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M21 12V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h7m9-5l-4-4m0 0l-4 4m4-4v12" /></svg></div>
+                            <span className="text-[8px] font-black uppercase tracking-widest">GOLD</span>
+                        </button>
+                        <button onClick={() => setActiveTab('settle')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'settle' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}>
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${activeTab === 'settle' ? 'bg-indigo-600 text-white shadow-xl' : 'bg-slate-50'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2M12 8V7m0 1v8m0 0v1"/></svg></div>
+                            <span className="text-[8px] font-black uppercase tracking-widest">SETTLE</span>
                         </button>
                     </div>
                 </div>
