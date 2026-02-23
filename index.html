@@ -180,6 +180,7 @@
             };
             const addDebt = async (e) => {
                 e.preventDefault();
+                if (!debtForm.title || !debtForm.amount) return;
                 const now = new Date();
                 await supabaseClient.from('settle_records').insert([{ title: debtForm.title, amount: Number(debtForm.amount), pay_month: now.toLocaleString('default', { month: 'short', year: 'numeric' }), status: 'pending' }]);
                 setDebtForm({ title: '', amount: '' });
@@ -349,20 +350,14 @@
                             </div>
                         ) : activeTab === 'gold' ? (
                             <div className="space-y-6 animate-slide-up">
-                                {/* 修复后的布局 */}
                                 <div className="bg-white rounded-[30px] p-6 shadow-xl border border-amber-100">
                                     <div className="flex justify-between items-center mb-4">
                                         <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest italic">Live Market Price</h3>
                                         <span className={`font-black text-sm ${goldStats.profit >= 0 ? 'text-green-500' : 'text-rose-500'}`}>RM {goldStats.profit.toFixed(2)}</span>
                                     </div>
-                                    <div className="flex items-center gap-3 bg-amber-50 rounded-xl px-4 overflow-hidden">
-                                        <span className="text-xs font-black text-slate-800 whitespace-nowrap py-3">1G = RM</span>
-                                        <input 
-                                            type="number" 
-                                            className="flex-1 bg-transparent p-3 font-black text-amber-600 border-none outline-none text-center" 
-                                            value={currentGoldPrice} 
-                                            onChange={e => setCurrentGoldPrice(e.target.value)} 
-                                        />
+                                    <div className="flex items-center gap-3 bg-amber-50 rounded-xl px-4">
+                                        <span className="text-xs font-black text-slate-800 whitespace-nowrap">1G = RM</span>
+                                        <input type="number" className="flex-1 bg-transparent p-3 font-black text-amber-600 border-none outline-none text-center" value={currentGoldPrice} onChange={e => setCurrentGoldPrice(e.target.value)} />
                                     </div>
                                 </div>
                                 <form onSubmit={addOrUpdateGoldRecord} className="bg-white rounded-[30px] p-6 shadow-xl space-y-4">
@@ -375,7 +370,7 @@
                                         <input type="number" step="any" placeholder="Grams" className="bg-slate-50 p-4 rounded-2xl font-black outline-none" value={goldForm.grams} onChange={e => setGoldForm({...goldForm, grams: e.target.value})} />
                                         <input type="number" step="any" placeholder="Price/G" className="bg-slate-50 p-4 rounded-2xl font-black outline-none" value={goldForm.pricePerGram} onChange={e => setGoldForm({...goldForm, pricePerGram: e.target.value})} />
                                     </div>
-                                    <button className="w-full bg-amber-500 text-white font-black py-4 rounded-2xl shadow-lg uppercase tracking-widest text-xs">{goldEditingId ? 'Update Record' : 'Save Record'}</button>
+                                    <button className="w-full bg-amber-500 text-white font-black py-4 rounded-2xl shadow-lg uppercase tracking-widest text-xs">Save Record</button>
                                 </form>
                                 <div className="space-y-3">
                                     {goldRecords.map(r => (
@@ -403,10 +398,12 @@
                                     <button onClick={() => setSettleTab('paid')} className={`flex-1 py-3 rounded-xl text-[10px] font-black tracking-widest ${settleTab === 'paid' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400'}`}>PAID</button>
                                 </div>
                                 {settleTab === 'pending' && (
-                                    <form onSubmit={addDebt} className="bg-white p-4 rounded-3xl shadow-xl flex gap-2">
-                                        <input className="flex-1 bg-slate-50 p-4 rounded-2xl text-xs font-black outline-none" placeholder="项目" value={debtForm.title} onChange={e => setDebtForm({...debtForm, title: e.target.value})} />
-                                        <input type="number" className="w-24 bg-slate-50 p-4 rounded-2xl text-xs font-black outline-none" placeholder="RM" value={debtForm.amount} onChange={e => setDebtForm({...debtForm, amount: e.target.value})} />
-                                        <button className="bg-indigo-600 text-white px-6 rounded-2xl shadow-lg active:scale-95"><svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg></button>
+                                    <form onSubmit={addDebt} className="bg-white p-3 rounded-[24px] shadow-xl flex items-center gap-2 overflow-hidden">
+                                        <input className="flex-1 bg-slate-50 p-4 rounded-xl text-xs font-black outline-none min-w-0" placeholder="项目" value={debtForm.title} onChange={e => setDebtForm({...debtForm, title: e.target.value})} />
+                                        <input type="number" className="w-20 bg-slate-50 p-4 rounded-xl text-xs font-black outline-none" placeholder="RM" value={debtForm.amount} onChange={e => setDebtForm({...debtForm, amount: e.target.value})} />
+                                        <button type="submit" className="bg-indigo-600 text-white h-12 w-12 flex items-center justify-center rounded-xl shadow-lg shrink-0 active:scale-95 transition-all">
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+                                        </button>
                                     </form>
                                 )}
                                 <div className="space-y-3">
@@ -420,7 +417,6 @@
                                             </div>
                                             <div className="text-right">
                                                 <p className={`font-black text-lg italic tracking-tighter ${d.status === 'paid' ? 'text-slate-300' : 'text-indigo-600'}`}>RM {Number(d.amount).toFixed(2)}</p>
-                                                <p className="text-[8px] font-black text-slate-300 uppercase">点击编辑</p>
                                             </div>
                                         </div>
                                     ))}
