@@ -124,3 +124,27 @@ function BusinessTracker() {
     </div>
   );
 }
+                    {/* Footer - 保持原有 */}
+                    <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-100 px-6 py-6 flex justify-around items-center z-50 pb-[calc(env(safe-area-inset-bottom)+20px)]">
+                        <button onClick={() => setActiveTab('view')} className="flex flex-col items-center gap-2">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${activeTab === 'view' ? 'bg-indigo-600 text-white scale-110 shadow-lg' : 'bg-slate-100 text-slate-400'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"/></svg></div>
+                            <span className={`text-[8px] font-black tracking-widest ${activeTab === 'view' ? 'text-indigo-600' : 'text-slate-300'}`}>LIST</span>
+                        </button>
+                        <button onClick={() => { setEditingId(null); setForm({...form, title: '', amount: '', date: getToday()}); setActiveTab('add'); }} className="flex flex-col items-center gap-2 -mt-8">
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl transition-all ${activeTab === 'add' ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-900 text-white'}`}><svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg></div>
+                            <span className={`text-[8px] font-black tracking-widest ${activeTab === 'add' ? 'text-indigo-600' : 'text-slate-300'}`}>ADD</span>
+                        </button>
+                        <button onClick={() => setActiveTab('settle')} className="flex flex-col items-center gap-2">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${activeTab === 'settle' ? 'bg-indigo-600 text-white scale-110 shadow-lg' : 'bg-slate-100 text-slate-400'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2M12 8V7m0 1v8m0 0v1"/></svg></div>
+                            <span className={`text-[8px] font-black tracking-widest ${activeTab === 'settle' ? 'text-indigo-600' : 'text-slate-300'}`}>SETTLE</span>
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<CoupleTracker />);
+    </script>
+</body>
+</html>

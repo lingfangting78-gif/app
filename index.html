@@ -48,12 +48,10 @@
             const [isDropdownOpen, setIsDropdownOpen] = useState(false);
             const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
             
-            // --- Settle 状态改为从云端获取 ---
             const [debts, setDebts] = useState([]);
             const [debtForm, setDebtForm] = useState({ title: '', amount: '' });
             const [settleSubTab, setSettleSubTab] = useState('pending');
 
-            // --- 新增：获取云端结算数据 ---
             const fetchDebts = async () => {
                 const { data } = await supabaseClient
                     .from('settle_records')
@@ -75,7 +73,7 @@
                 
                 const { error } = await supabaseClient.from('settle_records').insert([newDebt]);
                 if (!error) {
-                    fetchDebts(); // 重新加载
+                    fetchDebts();
                     setDebtForm({ title: '', amount: '' });
                 }
             };
@@ -93,7 +91,6 @@
                 }
             };
 
-            // --- 数据逻辑部分 ---
             const totalPending = useMemo(() => 
                 debts.filter(d => d.status === 'pending').reduce((sum, d) => sum + Number(d.amount), 0), [debts]);
 
@@ -121,7 +118,7 @@
 
             useEffect(() => { 
                 fetchTrips(); 
-                fetchDebts(); // 初始化加载结算数据
+                fetchDebts();
             }, []);
 
             useEffect(() => { if (currentTripId) fetchRecords(currentTripId); }, [currentTripId]);
@@ -142,6 +139,26 @@
                 const { data } = await supabaseClient.from('records').select('*').eq('trip_id', tid).order('date', { ascending: false }).order('id', { ascending: false });
                 setRecords(data || []);
             }
+
+            // --- 新增：删除记录功能 ---
+            const deleteRecord = async () => {
+                if (!editingId) return;
+                if (confirm('确定要删除这条记账记录吗？')) {
+                    const { error } = await supabaseClient
+                        .from('records')
+                        .delete()
+                        .eq('id', editingId);
+                    
+                    if (!error) {
+                        await fetchRecords(currentTripId);
+                        setEditingId(null);
+                        setForm({ ...form, title: '', amount: '', date: getToday() });
+                        setActiveTab('view');
+                    } else {
+                        alert('删除失败，请检查网络');
+                    }
+                }
+            };
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
@@ -286,7 +303,22 @@
                                             <input type="number" step="any" readOnly={FIXED_RATE_CATEGORIES.includes(form.category)} className={`w-full p-4 rounded-2xl font-mono text-sm text-center border ${FIXED_RATE_CATEGORIES.includes(form.category) ? 'bg-slate-100 text-slate-400' : 'bg-white text-indigo-600 border-indigo-100 font-bold'}`} value={form.rate} onChange={e => setForm({...form, rate: e.target.value})} />
                                         </div>
                                     </div>
-                                    <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl active:scale-95 transition-all ${user === '女友支付' ? 'bg-rose-500' : 'bg-indigo-600'}`}>SAVE TRANSACTION</button>
+                                    
+                                    <div className="space-y-3 pt-2">
+                                        <button className={`w-full text-white font-black py-5 rounded-[24px] shadow-xl active:scale-95 transition-all ${user === '女友支付' ? 'bg-rose-500' : 'bg-indigo-600'}`}>
+                                            {editingId ? 'UPDATE TRANSACTION' : 'SAVE TRANSACTION'}
+                                        </button>
+                                        
+                                        {editingId && (
+                                            <button 
+                                                type="button" 
+                                                onClick={deleteRecord}
+                                                className="w-full text-rose-500 font-black py-4 rounded-[24px] border-2 border-rose-100 bg-rose-50/30 active:scale-95 transition-all text-[10px] tracking-[0.2em]"
+                                            >
+                                                DELETE THIS RECORD
+                                            </button>
+                                        )}
+                                    </div>
                                 </form>
                             </div>
                         ) : activeTab === 'view' ? (
